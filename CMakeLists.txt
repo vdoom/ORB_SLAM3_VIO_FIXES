@@ -2,15 +2,26 @@ cmake_minimum_required(VERSION 2.8)
 project(ORB_SLAM3)
 
 IF(NOT CMAKE_BUILD_TYPE)
-  SET(CMAKE_BUILD_TYPE Release)
+  SET(CMAKE_BUILD_TYPE RelWithDebInfo)
 ENDIF()
 
 MESSAGE("Build type: " ${CMAKE_BUILD_TYPE})
 
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS}  -Wall   -O3")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall   -O3")
-set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -march=native")
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -march=native")
+# Base flags with debug symbols
+set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -Wall -g")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wall -g")
+
+# Release mode: O3 optimization + native arch
+set(CMAKE_C_FLAGS_RELEASE "${CMAKE_C_FLAGS_RELEASE} -O3 -march=native")
+set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native")
+
+# RelWithDebInfo mode: O2 optimization + debug symbols (good for debugging)
+set(CMAKE_C_FLAGS_RELWITHDEBINFO "${CMAKE_C_FLAGS_RELWITHDEBINFO} -O2 -march=native")
+set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O2 -march=native")
+
+# Debug mode: no optimization, full debug info
+set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
 
 # Check C++11 or C++0x support
 include(CheckCXXCompilerFlag)
@@ -41,6 +52,17 @@ MESSAGE(${OpenCV_VERSION})
 find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(realsense2)
+
+# Include FetchContent for downloading dependencies
+include(FetchContent)
+
+# Fetch nlohmann/json library
+FetchContent_Declare(
+    json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG v3.11.3
+)
+FetchContent_MakeAvailable(json)
 
 include_directories(
 ${PROJECT_SOURCE_DIR}
@@ -135,6 +157,40 @@ if(realsense2_FOUND)
     )
 endif()
 
+##########################################################
+# MAVLink
+# Check for local MAVLink headers
+set(MAVLINK_LOCAL_DIR "${CMAKE_SOURCE_DIR}/mavlink")
+
+if(EXISTS "${MAVLINK_LOCAL_DIR}")
+    message(STATUS "Using local MAVLink headers: ${MAVLINK_LOCAL_DIR}")
+    set(MAVLINK_INCLUDE_DIR "${MAVLINK_LOCAL_DIR}")
+else()
+    # Try to download MAVLink
+    message(STATUS "Downloading MAVLink headers...")
+    include(FetchContent)
+    
+    FetchContent_Declare(
+        mavlink
+        GIT_REPOSITORY https://github.com/mavlink/c_library_v2.git
+        GIT_TAG master
+    )
+    
+    FetchContent_GetProperties(mavlink)
+    if(NOT mavlink_POPULATED)
+        FetchContent_Populate(mavlink)
+        set(MAVLINK_INCLUDE_DIR "${mavlink_SOURCE_DIR}")
+    endif()
+endif()
+
+# Verify headers exist
+if(NOT EXISTS "${MAVLINK_INCLUDE_DIR}/common/mavlink.h")
+    message(FATAL_ERROR "MAVLink headers not found! Run: ./download_mavlink.sh")
+endif()
+
+message(STATUS "MAVLink include: ${MAVLINK_INCLUDE_DIR}")
+##########################################################
+
 
 # Build examples
 
@@ -149,6 +205,12 @@ if(realsense2_FOUND)
     add_executable(rgbd_realsense_D435i
             Examples/RGB-D/rgbd_realsense_D435i.cc)
     target_link_libraries(rgbd_realsense_D435i ${PROJECT_NAME})
+endif()
+
+if(realsense2_FOUND)
+    add_executable(rgbd_realsense_d455
+            Examples/RGB-D/rgbd_realsense_d455_simple.cc)
+    target_link_libraries(rgbd_realsense_d455 ${PROJECT_NAME})
 endif()
 
 
@@ -255,6 +317,43 @@ if(realsense2_FOUND)
     add_executable(stereo_inertial_realsense_D435i
             Examples/Stereo-Inertial/stereo_inertial_realsense_D435i.cc)
     target_link_libraries(stereo_inertial_realsense_D435i ${PROJECT_NAME})
+
+    add_executable(stereo_inertial_realsense_D455
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455.cc)
+    target_link_libraries(stereo_inertial_realsense_D455 ${PROJECT_NAME})
+
+    add_executable(stereo_inertial_realsense_D455_2
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_2.cc)
+    target_link_libraries(stereo_inertial_realsense_D455_2 ${PROJECT_NAME})
+
+# Create library
+add_library(uart_transfer_lib STATIC
+    Examples/Stereo-Inertial/UARTTransfer.cpp
+    Examples/Stereo-Inertial/UARTTransfer.h
+)
+target_link_libraries(uart_transfer_lib PRIVATE Threads::Threads)
+
+    add_executable(stereo_inertial_realsense_D455_VIO
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO.cc)
+	target_include_directories(stereo_inertial_realsense_D455_VIO PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_realsense_D455_VIO ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
+
+    add_executable(stereo_inertial_realsense_D455_VIO_GPS
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS.cc)
+	target_include_directories(stereo_inertial_realsense_D455_VIO_GPS PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
+
+    add_executable(stereo_inertial_realsense_D455_axis_test
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_axis_test.cc)
+    target_link_libraries(stereo_inertial_realsense_D455_axis_test ${PROJECT_NAME})
+
+    add_executable(calibrate_d455
+            Examples/Stereo-Inertial/calibrate_d455.cc)
+    target_link_libraries(calibrate_d455 ${PROJECT_NAME})
+
+    add_executable(calibrate_d455_imu
+            Examples/Stereo-Inertial/calibrate_d455_imu.cc)
+    target_link_libraries(calibrate_d455_imu ${PROJECT_NAME})
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Calibration)
