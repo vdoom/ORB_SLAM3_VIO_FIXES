@@ -402,6 +402,3 @@ bool UARTTransfer::receiveFile(const std::string& saveDir,
     std::cout << std::endl << "✓ File received successfully: " << filepath << std::endl;
     return true;
 }
-
-
-

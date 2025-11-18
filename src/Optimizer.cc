@@ -486,7 +486,7 @@ void Optimizer::FullInertialBA(Map *pMap, int its, const bool bFixLocal, const l
         {
             if(pKFi->isBad() || pKFi->mPrevKF->mnId>maxKFid)
                 continue;
-            if(pKFi->bImu && pKFi->mPrevKF->bImu)
+            if(pKFi->bImu && pKFi->mPrevKF->bImu && pKFi->mpImuPreintegrated)
             {
                 pKFi->mpImuPreintegrated->SetNewBias(pKFi->mPrevKF->GetImuBias());
                 g2o::HyperGraph::Vertex* VP1 = optimizer.vertex(pKFi->mPrevKF->mnId);
@@ -3140,7 +3140,10 @@ void Optimizer::InertialOptimization(Map *pMap, Eigen::Matrix3d &Rwg, double &sc
             if(pKFi->isBad() || pKFi->mPrevKF->mnId>maxKFid)
                 continue;
             if(!pKFi->mpImuPreintegrated)
+            {
                 std::cout << "Not preintegrated measurement" << std::endl;
+                continue;
+            }
 
             pKFi->mpImuPreintegrated->SetNewBias(pKFi->mPrevKF->GetImuBias());
             g2o::HyperGraph::Vertex* VP1 = optimizer.vertex(pKFi->mPrevKF->mnId);
@@ -3312,6 +3315,11 @@ void Optimizer::InertialOptimization(Map *pMap, Eigen::Vector3d &bg, Eigen::Vect
         {
             if(pKFi->isBad() || pKFi->mPrevKF->mnId>maxKFid)
                 continue;
+            if(!pKFi->mpImuPreintegrated)
+            {
+                std::cout << "Not preintegrated measurement" << std::endl;
+                continue;
+            }
 
             pKFi->mpImuPreintegrated->SetNewBias(pKFi->mPrevKF->GetImuBias());
             g2o::HyperGraph::Vertex* VP1 = optimizer.vertex(pKFi->mPrevKF->mnId);

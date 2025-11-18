@@ -125,6 +125,3 @@ private:
 };
 
 #endif // UART_TRANSFER_H
-
-
-
