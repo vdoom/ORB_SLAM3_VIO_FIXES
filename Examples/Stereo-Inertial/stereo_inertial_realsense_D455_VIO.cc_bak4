@@ -1,0 +1,224 @@
+#include <iostream>
+#include <algorithm>
+#include <fstream>
+#include <chrono>
+#include <opencv2/opencv.hpp>
+#include <librealsense2/rs.hpp>
+#include <iomanip>
+#include <Eigen/Dense>
+#include "System.h"
+
+class VIOLogger {
+private:
+    std::ofstream log_file;
+    uint64_t start_time_us;
+    
+public:
+    VIOLogger(const std::string& filename) {
+        log_file.open(filename);
+        
+        // Write CSV header
+        log_file << "# MAVLink VISION_POSITION_ESTIMATE format for Pixhawk" << std::endl;
+        log_file << "# timestamp_us,x_m,y_m,z_m,roll_rad,pitch_rad,yaw_rad,";
+        log_file << "cov_xx,cov_xy,cov_xz,cov_xroll,cov_xpitch,cov_xyaw,";
+        log_file << "cov_yy,cov_yz,cov_yroll,cov_ypitch,cov_yyaw,";
+        log_file << "cov_zz,cov_zroll,cov_zpitch,cov_zyaw,";
+        log_file << "cov_rollroll,cov_rollpitch,cov_rollyaw,";
+        log_file << "cov_pitchpitch,cov_pitchyaw,cov_yawyaw" << std::endl;
+        
+        // Get system start time
+        auto now = std::chrono::high_resolution_clock::now();
+        start_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count();
+        
+        std::cout << "VIO logging started. Output file: " << filename << std::endl;
+    }
+    
+    ~VIOLogger() {
+        if (log_file.is_open()) {
+            log_file.close();
+        }
+    }
+    
+    void logPose(double timestamp, const Sophus::SE3f& Tcw, bool tracking_good) {
+        if (!log_file.is_open() || !tracking_good) return;
+        
+        // Convert timestamp to microseconds since start
+        uint64_t timestamp_us = start_time_us + static_cast<uint64_t>(timestamp * 1e6);
+        
+        // Get camera pose (inverse of Tcw gives camera position in world frame)
+        Sophus::SE3f Twc = Tcw.inverse();
+        Eigen::Vector3f position = Twc.translation();
+        Eigen::Matrix3f rotation = Twc.rotationMatrix();
+        
+        // Convert from ORB-SLAM3 camera frame to NED frame
+        // ORB-SLAM3: X-right, Y-down, Z-forward
+        // NED: X-north, Y-east, Z-down
+        float ned_x = position.z();   // Forward -> North
+        float ned_y = -position.x();  // Right -> West, so negate for East
+        float ned_z = position.y();   // Down -> Down
+        
+        // Convert rotation matrix to Euler angles (roll, pitch, yaw)
+        Eigen::Vector3f euler = rotation.eulerAngles(2, 1, 0); // ZYX order
+        float roll = euler[2];
+        float pitch = euler[1]; 
+        float yaw = euler[0];
+        
+        // Transform Euler angles to NED frame
+        float ned_roll = roll;
+        float ned_pitch = -pitch;
+        float ned_yaw = yaw + M_PI/2;
+        
+        // Normalize yaw to [-pi, pi]
+        while (ned_yaw > M_PI) ned_yaw -= 2*M_PI;
+        while (ned_yaw < -M_PI) ned_yaw += 2*M_PI;
+        
+        // Simple diagonal covariance
+        float pos_var = 0.01f;      // 10cm std deviation
+        float ang_var = 0.001f;     // ~1.8 degree std deviation
+        
+        std::vector<float> covariance(21, 0.0f);
+        covariance[0] = pos_var;    // x variance
+        covariance[6] = pos_var;    // y variance  
+        covariance[11] = pos_var;   // z variance
+        covariance[15] = ang_var;   // roll variance
+        covariance[18] = ang_var;   // pitch variance
+        covariance[20] = ang_var;   // yaw variance
+        
+        // Write to file
+        log_file << std::fixed << std::setprecision(6);
+        log_file << timestamp_us << ",";
+        log_file << ned_x << "," << ned_y << "," << ned_z << ",";
+        log_file << ned_roll << "," << ned_pitch << "," << ned_yaw;
+        
+        for (int i = 0; i < 21; i++) {
+            log_file << "," << covariance[i];
+        }
+        log_file << std::endl;
+        
+        // Console output
+        std::cout << "VIO: pos=(" << std::setprecision(3) << ned_x << "," << ned_y << "," << ned_z << ")"
+                  << " rpy=(" << ned_roll*180/M_PI << "," << ned_pitch*180/M_PI << "," << ned_yaw*180/M_PI << ")" 
+                  << std::endl;
+    }
+};
+
+int main(int argc, char **argv) {
+    if(argc != 4) {
+        std::cerr << "Usage: ./stereo_inertial_realsense path_to_vocabulary path_to_settings output_file" << std::endl;
+        return 1;
+    }
+
+    // Create SLAM system
+    ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, true);
+    
+    // Create VIO logger
+    VIOLogger vio_logger(argv[3]);
+
+    // Configure RealSense
+    rs2::pipeline pipe;
+    rs2::config cfg;
+    
+    cfg.enable_stream(RS2_STREAM_INFRARED, 1, 640, 480, RS2_FORMAT_Y8, 30);
+    cfg.enable_stream(RS2_STREAM_INFRARED, 2, 640, 480, RS2_FORMAT_Y8, 30);
+    cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F, 250);
+    cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F, 400);
+    
+    rs2::pipeline_profile profile = pipe.start(cfg);
+    
+    std::vector<ORB_SLAM3::IMU::Point> vImuMeas;
+    int frame_count = 0;
+    
+    std::cout << "Starting VIO tracking and logging..." << std::endl;
+    std::cout << "Move the camera to initialize the system." << std::endl;
+    
+    while(true) {
+        rs2::frameset frames = pipe.wait_for_frames();
+        frame_count++;
+        
+        // Collect IMU data (using your working approach)
+        auto motion_frames = frames.first_or_default(RS2_STREAM_ACCEL);
+        auto gyro_frames = frames.first_or_default(RS2_STREAM_GYRO);
+        
+        if (motion_frames && gyro_frames) {
+            auto accel_data = motion_frames.as<rs2::motion_frame>().get_motion_data();
+            auto gyro_data = gyro_frames.as<rs2::motion_frame>().get_motion_data();
+            
+            double imu_timestamp = motion_frames.get_timestamp() * 1e-3;
+            
+            // Create IMU measurement
+            ORB_SLAM3::IMU::Point imu_point(accel_data.x, accel_data.y, accel_data.z,
+                                          gyro_data.x, gyro_data.y, gyro_data.z, imu_timestamp);
+            vImuMeas.push_back(imu_point);
+            
+            // Debug: print IMU data occasionally
+            if (frame_count % 100 == 0) {
+                std::cout << "Frame " << frame_count << ": IMU measurements = " << vImuMeas.size() << std::endl;
+                std::cout << "  Latest IMU: accel=(" << accel_data.x << "," << accel_data.y << "," << accel_data.z 
+                          << ") gyro=(" << gyro_data.x << "," << gyro_data.y << "," << gyro_data.z << ")" << std::endl;
+            }
+        } else {
+            if (frame_count % 100 == 0) {
+                std::cout << "Frame " << frame_count << ": No IMU data!" << std::endl;
+            }
+        }
+        
+        // Get stereo images
+        rs2::video_frame ir_frame_left = frames.get_infrared_frame(1);
+        rs2::video_frame ir_frame_right = frames.get_infrared_frame(2);
+        
+        if (!ir_frame_left || !ir_frame_right) continue;
+        
+        cv::Mat left(cv::Size(640, 480), CV_8UC1, (void*)ir_frame_left.get_data());
+        cv::Mat right(cv::Size(640, 480), CV_8UC1, (void*)ir_frame_right.get_data());
+        
+        double timestamp = ir_frame_left.get_timestamp() * 1e-3;
+        
+        // Track with stereo-inertial (using your working approach)
+        Sophus::SE3f Tcw = SLAM.TrackStereo(left, right, timestamp, vImuMeas);
+        
+        // Check tracking status
+        auto tracking_state = SLAM.GetTrackingState();
+        bool tracking_good = (tracking_state == ORB_SLAM3::Tracking::OK);
+        
+        // Log VIO data for Pixhawk
+        if (tracking_good) {
+            vio_logger.logPose(timestamp, Tcw, tracking_good);
+        }
+        
+        // Display tracking status
+        if (frame_count % 30 == 0) {  // Every 30 frames
+            switch(tracking_state) {
+                case ORB_SLAM3::Tracking::SYSTEM_NOT_READY:
+                    std::cout << "System not ready" << std::endl;
+                    break;
+                case ORB_SLAM3::Tracking::NO_IMAGES_YET:
+                    std::cout << "No images yet" << std::endl;
+                    break;
+                case ORB_SLAM3::Tracking::NOT_INITIALIZED:
+                    std::cout << "Not initialized - move camera with rotation!" << std::endl;
+                    break;
+                case ORB_SLAM3::Tracking::OK:
+                    std::cout << "Tracking OK - logging VIO data" << std::endl;
+                    break;
+                case ORB_SLAM3::Tracking::RECENTLY_LOST:
+                    std::cout << "Recently lost tracking" << std::endl;
+                    break;
+                case ORB_SLAM3::Tracking::LOST:
+                    std::cout << "Lost tracking" << std::endl;
+                    break;
+            }
+        }
+        
+        vImuMeas.clear(); // Clear after use (like your working code)
+        
+        // Optional: Display images
+        cv::imshow("Left", left);
+        cv::imshow("Right", right);
+        if(cv::waitKey(1) == 27) break; // ESC to exit
+    }
+    
+    std::cout << "Shutting down..." << std::endl;
+    SLAM.Shutdown();
+    return 0;
+}
