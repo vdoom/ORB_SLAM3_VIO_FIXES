@@ -470,7 +470,9 @@ private:
             data.time_usec,           // Timestamp (microseconds)
             data.vx,                  // X velocity (m/s)
             data.vy,                  // Y velocity (m/s)
-            data.vz                   // Z velocity (m/s)
+            data.vz,                  // Z velocity (m/s)
+            nullptr,                  // Covariance (not used)
+            0                         // Reset counter
         );
         std::cout << "[DEBUG] Message packed successfully, return value=" << msg_len << std::endl;
 
