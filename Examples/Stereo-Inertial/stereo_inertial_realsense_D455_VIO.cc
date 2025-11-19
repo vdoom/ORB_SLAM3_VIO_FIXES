@@ -32,7 +32,8 @@
 // MAVLink transmission mode
 enum class MAVLinkMode {
     ODOMETRY,                    // Send ODOMETRY messages (default)
-    VISION_POSITION_ESTIMATE     // Send VISION_POSITION_ESTIMATE messages
+    VISION_POSITION_ESTIMATE,    // Send VISION_POSITION_ESTIMATE messages
+    VISION_POSITION_AND_SPEED    // Send both VISION_POSITION_ESTIMATE and VISION_SPEED_ESTIMATE
 };
 
 // Structure to hold odometry data
@@ -370,20 +371,46 @@ private:
 
     // Send vision position estimate from queued odometry data
     void sendVisionPositionEstimate(const OdometryData& data) {
-        mavlink_message_t msg;
-        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+        std::cout << "[DEBUG] Entering sendVisionPositionEstimate" << std::endl;
 
+        // Initialize structures to zero for safety
+        mavlink_message_t msg;
+        memset(&msg, 0, sizeof(msg));
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+        memset(buf, 0, sizeof(buf));
+
+        std::cout << "[DEBUG] Converting quaternion to yaw" << std::endl;
         // Convert quaternion to Euler angles for yaw
         float qw = data.q[0];
         float qx = data.q[1];
         float qy = data.q[2];
         float qz = data.q[3];
 
+        // Validate quaternion values
+        if (!std::isfinite(qw) || !std::isfinite(qx) || !std::isfinite(qy) || !std::isfinite(qz)) {
+            std::cerr << "[ERROR] Invalid quaternion values: qw=" << qw << " qx=" << qx
+                     << " qy=" << qy << " qz=" << qz << std::endl;
+            return;
+        }
+
         // Calculate yaw from quaternion
         float yaw = atan2(2.0f * (qw * qz + qx * qy), 1.0f - 2.0f * (qy * qy + qz * qz));
 
+        // Validate position and yaw
+        if (!std::isfinite(data.x) || !std::isfinite(data.y) || !std::isfinite(data.z) || !std::isfinite(yaw)) {
+            std::cerr << "[ERROR] Invalid position or yaw: x=" << data.x << " y=" << data.y
+                     << " z=" << data.z << " yaw=" << yaw << std::endl;
+            return;
+        }
+
+        std::cout << "[DEBUG] About to pack VISION_POSITION_ESTIMATE message" << std::endl;
+        std::cout << "[DEBUG] system_id=" << (int)system_id << " component_id=" << (int)component_id << std::endl;
+        std::cout << "[DEBUG] pos=(" << data.x << "," << data.y << "," << data.z << ") yaw=" << yaw << std::endl;
+
         // Pack VISION_POSITION_ESTIMATE message
-        mavlink_msg_vision_position_estimate_pack(
+        // Note: Using MAVLink v2 common message set function signature
+        std::cout << "[DEBUG] Calling mavlink_msg_vision_position_estimate_pack..." << std::endl;
+        uint16_t msg_len = mavlink_msg_vision_position_estimate_pack(
             system_id,
             component_id,
             &msg,
@@ -391,14 +418,19 @@ private:
             data.x,                   // X position (m)
             data.y,                   // Y position (m)
             data.z,                   // Z position (m)
-            0.0f,                     // Roll angle (rad) - set to 0 or extract from quaternion if needed
-            0.0f,                     // Pitch angle (rad) - set to 0 or extract from quaternion if needed
-            yaw,                      // Yaw angle (rad)
-            data.pose_covariance,     // Covariance matrix (21 elements, row-major)
-            data.reset_counter        // Reset counter
+            0.0f,                     // Roll angle (rad)
+            0.0f,                     // Pitch angle (rad)
+            yaw,                       // Yaw angle (rad)
+            data.pose_covariance,
+            data.reset_counter
         );
+        std::cout << "[DEBUG] Message packed successfully, return value=" << msg_len << std::endl;
 
+        std::cout << "[DEBUG] Converting to buffer..." << std::endl;
         uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        std::cout << "[DEBUG] Buffer created, len=" << len << std::endl;
+
+        std::cout << "[DEBUG] Writing to serial, fd=" << serial_fd << std::endl;
         ssize_t sent = write(serial_fd, buf, len);
 
         if (sent < 0) {
@@ -408,6 +440,58 @@ private:
                      << ") | Yaw: " << yaw
                      << " | Q-size: " << getQueueSize() << std::endl;
         }
+        std::cout << "[DEBUG] Exiting sendVisionPositionEstimate" << std::endl;
+    }
+
+    // Send vision speed estimate from queued odometry data
+    void sendVisionSpeedEstimate(const OdometryData& data) {
+        std::cout << "[DEBUG] Entering sendVisionSpeedEstimate" << std::endl;
+
+        // Initialize structures to zero for safety
+        mavlink_message_t msg;
+        memset(&msg, 0, sizeof(msg));
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+        memset(buf, 0, sizeof(buf));
+
+        // Validate velocity values
+        if (!std::isfinite(data.vx) || !std::isfinite(data.vy) || !std::isfinite(data.vz)) {
+            std::cerr << "[ERROR] Invalid velocity values: vx=" << data.vx << " vy=" << data.vy
+                     << " vz=" << data.vz << std::endl;
+            return;
+        }
+
+        std::cout << "[DEBUG] About to pack VISION_SPEED_ESTIMATE message" << std::endl;
+
+        // Pack VISION_SPEED_ESTIMATE message
+        // Note: Using MAVLink v2 common message set function signature
+        std::cout << "[DEBUG] Calling mavlink_msg_vision_speed_estimate_pack..." << std::endl;
+        uint16_t msg_len = mavlink_msg_vision_speed_estimate_pack(
+            system_id,
+            component_id,
+            &msg,
+            data.time_usec,           // Timestamp (microseconds)
+            data.vx,                  // X velocity (m/s)
+            data.vy,                  // Y velocity (m/s)
+            data.vz,                  // Z velocity (m/s)
+            nullptr,                  // Covariance (not used)
+            data.reset_counter        // Reset counter
+        );
+        std::cout << "[DEBUG] Message packed successfully, return value=" << msg_len << std::endl;
+
+        std::cout << "[DEBUG] Converting to buffer..." << std::endl;
+        uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        std::cout << "[DEBUG] Buffer created, len=" << len << std::endl;
+
+        std::cout << "[DEBUG] Writing to serial, fd=" << serial_fd << std::endl;
+        ssize_t sent = write(serial_fd, buf, len);
+
+        if (sent < 0) {
+            std::cerr << "Failed to send vision speed estimate: " << strerror(errno) << std::endl;
+        } else {
+            std::cout << "Sent vision speed estimate | Vel: (" << data.vx << ", " << data.vy << ", " << data.vz
+                     << ") | Q-size: " << getQueueSize() << std::endl;
+        }
+        std::cout << "[DEBUG] Exiting sendVisionSpeedEstimate" << std::endl;
     }
 
     // Send data based on configured mode
@@ -418,6 +502,10 @@ private:
                 break;
             case MAVLinkMode::VISION_POSITION_ESTIMATE:
                 sendVisionPositionEstimate(data);
+                break;
+            case MAVLinkMode::VISION_POSITION_AND_SPEED:
+                sendVisionPositionEstimate(data);
+                sendVisionSpeedEstimate(data);
                 break;
         }
     }
@@ -554,7 +642,14 @@ public:
             now.time_since_epoch()).count();
 
         std::cout << "VIO logging started. Output file: " << filename << std::endl;
-        std::cout << "MAVLink mode: " << (mode == MAVLinkMode::ODOMETRY ? "ODOMETRY" : "VISION_POSITION_ESTIMATE") << std::endl;
+        std::cout << "MAVLink mode: ";
+        if (mode == MAVLinkMode::ODOMETRY) {
+            std::cout << "ODOMETRY" << std::endl;
+        } else if (mode == MAVLinkMode::VISION_POSITION_ESTIMATE) {
+            std::cout << "VISION_POSITION_ESTIMATE" << std::endl;
+        } else {
+            std::cout << "VISION_POSITION_ESTIMATE + VISION_SPEED_ESTIMATE" << std::endl;
+        }
 
 		//=========================================================================
 		// MavLink
@@ -737,7 +832,9 @@ public:
 int main(int argc, char **argv) {
     if(argc < 4 || argc > 5) {
         std::cerr << "Usage: ./stereo_inertial_realsense path_to_vocabulary path_to_settings output_file [mode]" << std::endl;
-        std::cerr << "  mode: 0 = ODOMETRY (default), 1 = VISION_POSITION_ESTIMATE" << std::endl;
+        std::cerr << "  mode: 0 = ODOMETRY (default)" << std::endl;
+        std::cerr << "        1 = VISION_POSITION_ESTIMATE" << std::endl;
+        std::cerr << "        2 = VISION_POSITION_ESTIMATE + VISION_SPEED_ESTIMATE" << std::endl;
         return 1;
     }
 
@@ -747,6 +844,8 @@ int main(int argc, char **argv) {
         int mode_val = std::atoi(argv[4]);
         if (mode_val == 1) {
             mavlink_mode = MAVLinkMode::VISION_POSITION_ESTIMATE;
+        } else if (mode_val == 2) {
+            mavlink_mode = MAVLinkMode::VISION_POSITION_AND_SPEED;
         } else if (mode_val != 0) {
             std::cerr << "Invalid mode: " << mode_val << ". Using ODOMETRY mode." << std::endl;
         }
@@ -891,5 +990,3 @@ int main(int argc, char **argv) {
     SLAM.Shutdown();
     return 0;
 }
-
-
