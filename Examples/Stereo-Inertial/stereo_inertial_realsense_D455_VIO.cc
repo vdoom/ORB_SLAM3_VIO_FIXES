@@ -702,7 +702,7 @@ public:
         latest_imu.valid = true;
     }
 
-    void logPose(double timestamp, const Sophus::SE3f& Tcw, bool tracking_good) {
+    void logPose(double timestamp, const Sophus::SE3f& Tcw, const Eigen::Vector3f& velocity, bool tracking_good) {
 
         // Convert timestamp to microseconds since start
         uint64_t timestamp_us = start_time_us + static_cast<uint64_t>(timestamp * 1e6);
@@ -718,6 +718,11 @@ public:
         float ned_x = position.z();   // Forward -> North
         float ned_y = -position.x();  // Right -> West, so negate for East
         float ned_z = position.y();   // Down -> Down
+
+        // Transform velocity to NED frame (same transformation as position)
+        float ned_vx = velocity.z();   // Forward -> North
+        float ned_vy = -velocity.x();  // Right -> West, so negate for East
+        float ned_vz = velocity.y();   // Down -> Down
 
         // Convert rotation matrix to Euler angles (roll, pitch, yaw)
         Eigen::Vector3f euler = rotation.eulerAngles(2, 1, 0); // ZYX order
@@ -807,18 +812,18 @@ public:
         std::cout << "!!! VIO: pos=(" << std::setprecision(3) << ned_x << "," << ned_y << "," << ned_z << ")"
                   << " rpy=(" << ned_roll*180/M_PI << "," << ned_pitch*180/M_PI << "," << ned_yaw*180/M_PI << ")"
 				  << " timestamp:"<<timestamp_us
-				  << " velocity=("<<latest_imu.accel.x()<<","<<latest_imu.accel.y()<<","<<latest_imu.accel.z()<<")"
+				  << " velocity=("<<ned_vx<<","<<ned_vy<<","<<ned_vz<<")"
 				  << " angularVelocity=("<<latest_imu.gyro.x()<<","<<latest_imu.gyro.y()<<","<<latest_imu.gyro.z()<<")"
 				  << " Q=("<<qw<<","<<qx<<","<<qy<<","<<qz<<")"
                   << std::endl;
-				  
+
 
 		// Queue odometry data (this is thread-safe)
         mavlink->queueOdometry(
             timestamp_us,
             ned_x, ned_y, ned_z,
             q,
-            latest_imu.accel.x(), latest_imu.accel.y(), latest_imu.accel.z(),
+            ned_vx, ned_vy, ned_vz,  // Use actual velocity from ORB-SLAM3
             latest_imu.gyro.x(), latest_imu.gyro.y(), latest_imu.gyro.z(),
             pose_covariance,
             velocity_covariance,
@@ -941,6 +946,9 @@ int main(int argc, char **argv) {
         // Track with stereo-inertial (using your working approach)
         Sophus::SE3f Tcw = SLAM.TrackStereo(left, right, timestamp, vImuMeas);
 
+        // Get velocity from ORB-SLAM3
+        Eigen::Vector3f velocity = SLAM.GetVelocity();
+
         // Check tracking status
         auto tracking_state = SLAM.GetTrackingState();
         bool tracking_good = (tracking_state == ORB_SLAM3::Tracking::OK);
@@ -981,7 +989,7 @@ int main(int argc, char **argv) {
 
                 // Log VIO data for Pixhawk
         //if (tracking_good) {
-            vio_logger.logPose(timestamp, Tcw, tracking_good);
+            vio_logger.logPose(timestamp, Tcw, velocity, tracking_good);
         //}
         vImuMeas.clear(); // Clear after use (like your working code)
     }

@@ -1336,6 +1336,11 @@ vector<cv::KeyPoint> System::GetTrackedKeyPointsUn()
     return mTrackedKeyPointsUn;
 }
 
+Eigen::Vector3f System::GetVelocity()
+{
+    return mpTracker->mCurrentFrame.GetVelocity();
+}
+
 double System::GetTimeFromIMUInit()
 {
     double aux = mpLocalMapper->GetCurrKFTime()-mpLocalMapper->mFirstTs;

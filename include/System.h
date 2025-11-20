@@ -177,6 +177,9 @@ public:
     std::vector<MapPoint*> GetTrackedMapPoints();
     std::vector<cv::KeyPoint> GetTrackedKeyPointsUn();
 
+    // Get velocity from current frame (call right after Track*)
+    Eigen::Vector3f GetVelocity();
+
     // For debugging
     double GetTimeFromIMUInit();
     bool isLost();
