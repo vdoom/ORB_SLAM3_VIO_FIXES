@@ -8,6 +8,46 @@
 #include <Eigen/Dense>
 #include "System.h"
 
+// Interpolate IMU measurements to match gyro timestamps
+rs2_vector interpolateMeasure(const double target_time,
+                              const rs2_vector current_data, const double current_time,
+                              const rs2_vector prev_data, const double prev_time)
+{
+    // If there are not previous information, the current data is propagated
+    if(prev_time == 0)
+    {
+        return current_data;
+    }
+
+    rs2_vector increment;
+    rs2_vector value_interp;
+
+    if(target_time > current_time) {
+        value_interp = current_data;
+    }
+    else if(target_time > prev_time)
+    {
+        increment.x = current_data.x - prev_data.x;
+        increment.y = current_data.y - prev_data.y;
+        increment.z = current_data.z - prev_data.z;
+
+        double factor = (target_time - prev_time) / (current_time - prev_time);
+
+        value_interp.x = prev_data.x + increment.x * factor;
+        value_interp.y = prev_data.y + increment.y * factor;
+        value_interp.z = prev_data.z + increment.z * factor;
+
+        // Use current data (zero-order hold)
+        value_interp = current_data;
+    }
+    else
+    {
+        value_interp = prev_data;
+    }
+
+    return value_interp;
+}
+
 //==========================================================
 #include <cstring>
 #include <cmath>
@@ -868,18 +908,108 @@ int main(int argc, char **argv) {
 
     cfg.enable_stream(RS2_STREAM_INFRARED, 1, 640, 480, RS2_FORMAT_Y8, 30);
     cfg.enable_stream(RS2_STREAM_INFRARED, 2, 640, 480, RS2_FORMAT_Y8, 30);
-    cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F, 250);
-    cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F, 400);
+    cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F);
+    cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F);
 
-    rs2::pipeline_profile profile = pipe.start(cfg);
+    // IMU callback variables
+    std::mutex imu_mutex;
+    std::condition_variable cond_image_rec;
 
-    std::vector<ORB_SLAM3::IMU::Point> vImuMeas;
-    int frame_count = 0;
-	
-	// Variables to store latest IMU data for logging
+    std::vector<double> v_accel_timestamp;
+    std::vector<rs2_vector> v_accel_data;
+    std::vector<double> v_gyro_timestamp;
+    std::vector<rs2_vector> v_gyro_data;
+
+    double prev_accel_timestamp = 0;
+    rs2_vector prev_accel_data;
+    double current_accel_timestamp = 0;
+    rs2_vector current_accel_data;
+    std::vector<double> v_accel_timestamp_sync;
+    std::vector<rs2_vector> v_accel_data_sync;
+
+    cv::Mat imCV, imRightCV;
+    int width_img = 640, height_img = 480;
+    double timestamp_image = -1.0;
+    bool image_ready = false;
+    int count_im_buffer = 0;
+
+    double offset = 0; // Timestamp offset in ms
+
+    // Variables to store latest IMU data for logging
     Eigen::Vector3f latest_accel(0, 0, 0);
     Eigen::Vector3f latest_gyro(0, 0, 0);
     double latest_imu_timestamp = 0;
+
+    // IMU callback
+    auto imu_callback = [&](const rs2::frame& frame)
+    {
+        std::unique_lock<std::mutex> lock(imu_mutex);
+
+        if(rs2::frameset fs = frame.as<rs2::frameset>())
+        {
+            count_im_buffer++;
+
+            double new_timestamp_image = fs.get_timestamp()*1e-3;
+            if(std::abs(timestamp_image-new_timestamp_image)<0.001){
+                count_im_buffer--;
+                return;
+            }
+
+            rs2::video_frame ir_frameL = fs.get_infrared_frame(1);
+            rs2::video_frame ir_frameR = fs.get_infrared_frame(2);
+
+            imCV = cv::Mat(cv::Size(width_img, height_img), CV_8U, (void*)(ir_frameL.get_data()), cv::Mat::AUTO_STEP);
+            imRightCV = cv::Mat(cv::Size(width_img, height_img), CV_8U, (void*)(ir_frameR.get_data()), cv::Mat::AUTO_STEP);
+
+            timestamp_image = fs.get_timestamp()*1e-3;
+            image_ready = true;
+
+            while(v_gyro_timestamp.size() > v_accel_timestamp_sync.size())
+            {
+                int index = v_accel_timestamp_sync.size();
+                double target_time = v_gyro_timestamp[index];
+
+                v_accel_data_sync.push_back(current_accel_data);
+                v_accel_timestamp_sync.push_back(target_time);
+            }
+
+            lock.unlock();
+            cond_image_rec.notify_all();
+        }
+        else if (rs2::motion_frame m_frame = frame.as<rs2::motion_frame>())
+        {
+            if (m_frame.get_profile().stream_name() == "Gyro")
+            {
+                v_gyro_data.push_back(m_frame.get_motion_data());
+                v_gyro_timestamp.push_back((m_frame.get_timestamp()+offset)*1e-3);
+            }
+            else if (m_frame.get_profile().stream_name() == "Accel")
+            {
+                prev_accel_timestamp = current_accel_timestamp;
+                prev_accel_data = current_accel_data;
+
+                current_accel_data = m_frame.get_motion_data();
+                current_accel_timestamp = (m_frame.get_timestamp()+offset)*1e-3;
+
+                while(v_gyro_timestamp.size() > v_accel_timestamp_sync.size())
+                {
+                    int index = v_accel_timestamp_sync.size();
+                    double target_time = v_gyro_timestamp[index];
+
+                    rs2_vector interp_data = interpolateMeasure(target_time, current_accel_data, current_accel_timestamp,
+                                                                prev_accel_data, prev_accel_timestamp);
+
+                    v_accel_data_sync.push_back(interp_data);
+                    v_accel_timestamp_sync.push_back(target_time);
+                }
+            }
+        }
+    };
+
+    rs2::pipeline_profile profile = pipe.start(cfg, imu_callback);
+
+    std::vector<ORB_SLAM3::IMU::Point> vImuMeas;
+    int frame_count = 0;
 
     std::cout << "Starting VIO tracking and logging..." << std::endl;
     std::cout << "Move the camera to initialize the system." << std::endl;
@@ -894,56 +1024,77 @@ int main(int argc, char **argv) {
 		std::cout << "MavLink Connected!" << std::endl;
 	}
 
+    // Clear IMU vectors
+    v_gyro_data.clear();
+    v_gyro_timestamp.clear();
+    v_accel_data_sync.clear();
+    v_accel_timestamp_sync.clear();
+
     while(true) {
-        rs2::frameset frames = pipe.wait_for_frames();
-        frame_count++;
+        std::vector<rs2_vector> vGyro;
+        std::vector<double> vGyro_times;
+        std::vector<rs2_vector> vAccel;
+        cv::Mat left, right;
+        double timestamp;
 
-        // Collect IMU data (using your working approach)
-        auto motion_frames = frames.first_or_default(RS2_STREAM_ACCEL);
-        auto gyro_frames = frames.first_or_default(RS2_STREAM_GYRO);
+        {
+            std::unique_lock<std::mutex> lk(imu_mutex);
+            if(!image_ready)
+                cond_image_rec.wait(lk);
 
-        if (motion_frames && gyro_frames) {
-            auto accel_data = motion_frames.as<rs2::motion_frame>().get_motion_data();
-            auto gyro_data = gyro_frames.as<rs2::motion_frame>().get_motion_data();
+            if(count_im_buffer > 1)
+                std::cout << count_im_buffer - 1 << " dropped frs\n";
+            count_im_buffer = 0;
 
-            double imu_timestamp = motion_frames.get_timestamp() * 1e-3;
-			
-			// Store latest IMU data for logging
-            latest_accel = Eigen::Vector3f(accel_data.x, accel_data.y, accel_data.z);
-            latest_gyro = Eigen::Vector3f(gyro_data.x, gyro_data.y, gyro_data.z);
-            latest_imu_timestamp = imu_timestamp;
-			
-			vio_logger.updateIMUData(imu_timestamp, latest_accel, latest_gyro);
-			
-            // Create IMU measurement
-            ORB_SLAM3::IMU::Point imu_point(accel_data.x, accel_data.y, accel_data.z,
-                                          gyro_data.x, gyro_data.y, gyro_data.z, imu_timestamp);
-            vImuMeas.push_back(imu_point);
+            while(v_gyro_timestamp.size() > v_accel_timestamp_sync.size())
+            {
+                int index = v_accel_timestamp_sync.size();
+                double target_time = v_gyro_timestamp[index];
 
-            // Debug: print IMU data occasionally
-            if (frame_count % 100 == 0) {
-                std::cout << "Frame " << frame_count << ": IMU measurements = " << vImuMeas.size() << std::endl;
-                std::cout << "  Latest IMU: accel=(" << accel_data.x << "," << accel_data.y << "," << accel_data.z
-                          << ") gyro=(" << gyro_data.x << "," << gyro_data.y << "," << gyro_data.z << ")" << std::endl;
+                rs2_vector interp_data = interpolateMeasure(target_time, current_accel_data, current_accel_timestamp,
+                                                            prev_accel_data, prev_accel_timestamp);
+
+                v_accel_data_sync.push_back(interp_data);
+                v_accel_timestamp_sync.push_back(target_time);
             }
-        } else {
-            if (frame_count % 100 == 0) {
-                std::cout << "Frame " << frame_count << ": No IMU data!" << std::endl;
-            }
+
+            // Copy the IMU data
+            vGyro = v_gyro_data;
+            vGyro_times = v_gyro_timestamp;
+            vAccel = v_accel_data_sync;
+            timestamp = timestamp_image;
+            left = imCV.clone();
+            right = imRightCV.clone();
+
+            // Clear IMU vectors
+            v_gyro_data.clear();
+            v_gyro_timestamp.clear();
+            v_accel_data_sync.clear();
+            v_accel_timestamp_sync.clear();
+
+            image_ready = false;
         }
 
-        // Get stereo images
-        rs2::video_frame ir_frame_left = frames.get_infrared_frame(1);
-        rs2::video_frame ir_frame_right = frames.get_infrared_frame(2);
+        frame_count++;
 
-        if (!ir_frame_left || !ir_frame_right) continue;
+        // Build IMU measurements from synchronized data
+        for(size_t i = 0; i < vGyro.size(); ++i)
+        {
+            ORB_SLAM3::IMU::Point imu_point(vAccel[i].x, vAccel[i].y, vAccel[i].z,
+                                          vGyro[i].x, vGyro[i].y, vGyro[i].z,
+                                          vGyro_times[i]);
+            vImuMeas.push_back(imu_point);
+        }
 
-        cv::Mat left(cv::Size(640, 480), CV_8UC1, (void*)ir_frame_left.get_data());
-        cv::Mat right(cv::Size(640, 480), CV_8UC1, (void*)ir_frame_right.get_data());
+        // Store latest IMU data for logging
+        if(!vGyro.empty()) {
+            latest_gyro = Eigen::Vector3f(vGyro.back().x, vGyro.back().y, vGyro.back().z);
+            latest_accel = Eigen::Vector3f(vAccel.back().x, vAccel.back().y, vAccel.back().z);
+            latest_imu_timestamp = vGyro_times.back();
+            vio_logger.updateIMUData(latest_imu_timestamp, latest_accel, latest_gyro);
+        }
 
-        double timestamp = ir_frame_left.get_timestamp() * 1e-3;
-
-        // Track with stereo-inertial (using your working approach)
+        // Track with stereo-inertial
         Sophus::SE3f Tcw = SLAM.TrackStereo(left, right, timestamp, vImuMeas);
 
         // Get velocity from ORB-SLAM3
@@ -954,44 +1105,42 @@ int main(int argc, char **argv) {
         bool tracking_good = (tracking_state == ORB_SLAM3::Tracking::OK);
 
         // Display tracking status
-        //if (frame_count % 30 == 0) {  // Every 30 frames
-            switch(tracking_state) {
-                case ORB_SLAM3::Tracking::SYSTEM_NOT_READY:
-                    std::cout << "+++ System not ready" << std::endl;
-                    vio_logger.SetTrackingState(false);
-                    break;
-                case ORB_SLAM3::Tracking::NO_IMAGES_YET:
-                    std::cout << "+++ No images yet" << std::endl;
-                    vio_logger.SetTrackingState(false);
-                    break;
-                case ORB_SLAM3::Tracking::NOT_INITIALIZED:
-                    std::cout << "+++ Not initialized - move camera with rotation!" << std::endl;
-                    vio_logger.SetTrackingState(false);
-                    break;
-                case ORB_SLAM3::Tracking::OK:
-                    std::cout << "+++ Tracking OK - logging VIO data" << std::endl;
-                    vio_logger.SetTrackingState(true);
-                    break;
-                case ORB_SLAM3::Tracking::RECENTLY_LOST:
-                    std::cout << "+++ Recently lost tracking" << std::endl;
-                    vio_logger.SetTrackingState(false);
-                    break;
-                case ORB_SLAM3::Tracking::LOST:
-                    std::cout << "+++ Lost tracking" << std::endl;
-                    vio_logger.SetTrackingState(false);
-                    break;
-                case ORB_SLAM3::Tracking::OK_KLT:
-                    std::cout << "+++ Tracking OK using KLT optical flow" << std::endl;
-                    vio_logger.SetTrackingState(true);
-                    break;
-            }
-        //}
+        switch(tracking_state) {
+            case ORB_SLAM3::Tracking::SYSTEM_NOT_READY:
+                std::cout << "+++ System not ready" << std::endl;
+                vio_logger.SetTrackingState(false);
+                break;
+            case ORB_SLAM3::Tracking::NO_IMAGES_YET:
+                std::cout << "+++ No images yet" << std::endl;
+                vio_logger.SetTrackingState(false);
+                break;
+            case ORB_SLAM3::Tracking::NOT_INITIALIZED:
+                std::cout << "+++ Not initialized - move camera with rotation!" << std::endl;
+                vio_logger.SetTrackingState(false);
+                break;
+            case ORB_SLAM3::Tracking::OK:
+                std::cout << "+++ Tracking OK - logging VIO data" << std::endl;
+                vio_logger.SetTrackingState(true);
+                break;
+            case ORB_SLAM3::Tracking::RECENTLY_LOST:
+                std::cout << "+++ Recently lost tracking" << std::endl;
+                vio_logger.SetTrackingState(false);
+                break;
+            case ORB_SLAM3::Tracking::LOST:
+                std::cout << "+++ Lost tracking" << std::endl;
+                vio_logger.SetTrackingState(false);
+                break;
+            case ORB_SLAM3::Tracking::OK_KLT:
+                std::cout << "+++ Tracking OK using KLT optical flow" << std::endl;
+                vio_logger.SetTrackingState(true);
+                break;
+        }
 
-                // Log VIO data for Pixhawk
-        //if (tracking_good) {
-            vio_logger.logPose(timestamp, Tcw, velocity, tracking_good);
-        //}
-        vImuMeas.clear(); // Clear after use (like your working code)
+        // Log VIO data
+        vio_logger.logPose(timestamp, Tcw, velocity, tracking_good);
+
+        // Clear IMU measurements for next frame
+        vImuMeas.clear();
     }
 
     std::cout << "Shutting down..." << std::endl;
