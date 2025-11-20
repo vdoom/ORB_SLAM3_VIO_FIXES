@@ -4014,13 +4014,13 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
     }
 
 
-    if(mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId)
+    if(mLastFrame.mpLastKeyFrame && mLastFrame.mnId == mLastFrame.mpLastKeyFrame->mnFrameId)
     {
         mLastFrame.SetImuPoseVelocity(mLastFrame.mpLastKeyFrame->GetImuRotation(),
                                       mLastFrame.mpLastKeyFrame->GetImuPosition(),
                                       mLastFrame.mpLastKeyFrame->GetVelocity());
     }
-    else
+    else if(mLastFrame.mpLastKeyFrame)
     {
         const Eigen::Vector3f Gz(0, 0, -IMU::GRAVITY_VALUE);
         const Eigen::Vector3f twb1 = mLastFrame.mpLastKeyFrame->GetImuPosition();
@@ -4033,7 +4033,7 @@ void Tracking::UpdateFrameIMU(const float s, const IMU::Bias &b, KeyFrame* pCurr
                                       Vwb1 + Gz*t12 + Rwb1*mLastFrame.mpImuPreintegrated->GetUpdatedDeltaVelocity());
     }
 
-    if (mCurrentFrame.mpImuPreintegrated)
+    if (mCurrentFrame.mpImuPreintegrated && mCurrentFrame.mpLastKeyFrame)
     {
         const Eigen::Vector3f Gz(0, 0, -IMU::GRAVITY_VALUE);
 
