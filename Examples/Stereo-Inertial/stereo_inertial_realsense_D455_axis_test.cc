@@ -27,24 +27,15 @@ private:
     float pos_y_min, pos_y_max;
     float pos_z_min, pos_z_max;
 
-    // Acceleration min/max
-    float accel_x_min, accel_x_max;
-    float accel_y_min, accel_y_max;
-    float accel_z_min, accel_z_max;
+    // Velocity min/max (from ORB-SLAM3)
+    float vel_x_min, vel_x_max;
+    float vel_y_min, vel_y_max;
+    float vel_z_min, vel_z_max;
 
-    // Gyro min/max (optional, for completeness)
+    // Angular velocity min/max (from gyro)
     float gyro_x_min, gyro_x_max;
     float gyro_y_min, gyro_y_max;
     float gyro_z_min, gyro_z_max;
-
-    // Gravity compensation
-    bool gravity_compensation_enabled;
-    bool gravity_calibrated;
-    Eigen::Vector3f gravity_world;  // Gravity in world frame (constant direction)
-    Eigen::Matrix3f initial_rotation;  // Initial camera rotation when calibrating
-    std::vector<Eigen::Vector3f> calibration_samples;
-    int calibration_sample_count;
-    static const int CALIBRATION_SAMPLES_NEEDED = 500;  // ~2 seconds at 250Hz
 
     int update_counter;
     std::chrono::steady_clock::time_point last_print_time;
@@ -52,30 +43,25 @@ private:
     int reset_count;
 
 public:
-    AxisStatistics(bool enable_gravity_compensation = false)
+    AxisStatistics()
         : pos_x_min(std::numeric_limits<float>::max())
         , pos_x_max(std::numeric_limits<float>::lowest())
         , pos_y_min(std::numeric_limits<float>::max())
         , pos_y_max(std::numeric_limits<float>::lowest())
         , pos_z_min(std::numeric_limits<float>::max())
         , pos_z_max(std::numeric_limits<float>::lowest())
-        , accel_x_min(std::numeric_limits<float>::max())
-        , accel_x_max(std::numeric_limits<float>::lowest())
-        , accel_y_min(std::numeric_limits<float>::max())
-        , accel_y_max(std::numeric_limits<float>::lowest())
-        , accel_z_min(std::numeric_limits<float>::max())
-        , accel_z_max(std::numeric_limits<float>::lowest())
+        , vel_x_min(std::numeric_limits<float>::max())
+        , vel_x_max(std::numeric_limits<float>::lowest())
+        , vel_y_min(std::numeric_limits<float>::max())
+        , vel_y_max(std::numeric_limits<float>::lowest())
+        , vel_z_min(std::numeric_limits<float>::max())
+        , vel_z_max(std::numeric_limits<float>::lowest())
         , gyro_x_min(std::numeric_limits<float>::max())
         , gyro_x_max(std::numeric_limits<float>::lowest())
         , gyro_y_min(std::numeric_limits<float>::max())
         , gyro_y_max(std::numeric_limits<float>::lowest())
         , gyro_z_min(std::numeric_limits<float>::max())
         , gyro_z_max(std::numeric_limits<float>::lowest())
-        , gravity_compensation_enabled(enable_gravity_compensation)
-        , gravity_calibrated(false)
-        , gravity_world(0, 0, 0)
-        , initial_rotation(Eigen::Matrix3f::Identity())
-        , calibration_sample_count(0)
         , update_counter(0)
         , last_print_time(std::chrono::steady_clock::now())
         , last_reset_time(std::chrono::steady_clock::now())
@@ -88,11 +74,6 @@ public:
         std::cout << "Press Ctrl+C to see final statistics." << std::endl;
         std::cout << "Statistics update every 2 seconds..." << std::endl;
         std::cout << "Statistics RESET every 10 seconds..." << std::endl;
-
-        if (gravity_compensation_enabled) {
-            std::cout << "\n*** GRAVITY COMPENSATION ENABLED ***" << std::endl;
-            std::cout << "Keep camera STATIONARY for 2 seconds to calibrate gravity..." << std::endl;
-        }
         std::cout << std::endl;
     }
 
@@ -100,8 +81,8 @@ public:
         pos_x_min = pos_y_min = pos_z_min = std::numeric_limits<float>::max();
         pos_x_max = pos_y_max = pos_z_max = std::numeric_limits<float>::lowest();
 
-        accel_x_min = accel_y_min = accel_z_min = std::numeric_limits<float>::max();
-        accel_x_max = accel_y_max = accel_z_max = std::numeric_limits<float>::lowest();
+        vel_x_min = vel_y_min = vel_z_min = std::numeric_limits<float>::max();
+        vel_x_max = vel_y_max = vel_z_max = std::numeric_limits<float>::lowest();
 
         gyro_x_min = gyro_y_min = gyro_z_min = std::numeric_limits<float>::max();
         gyro_x_max = gyro_y_max = gyro_z_max = std::numeric_limits<float>::lowest();
@@ -132,82 +113,13 @@ public:
         pos_z_max = std::max(pos_z_max, z);
     }
 
-    // Add accelerometer sample for gravity calibration
-    // rotation_cw is the camera rotation matrix (world to camera)
-    bool calibrateGravity(float ax, float ay, float az, const Eigen::Matrix3f& rotation_cw) {
-        if (!gravity_compensation_enabled || gravity_calibrated) {
-            return gravity_calibrated;
-        }
-
-        calibration_samples.push_back(Eigen::Vector3f(ax, ay, az));
-        calibration_sample_count++;
-
-        if (calibration_sample_count >= CALIBRATION_SAMPLES_NEEDED) {
-            // Calculate average gravity in camera frame
-            Eigen::Vector3f sum(0, 0, 0);
-            for (const auto& sample : calibration_samples) {
-                sum += sample;
-            }
-            Eigen::Vector3f gravity_camera = sum / calibration_sample_count;
-
-            // Store initial camera rotation
-            initial_rotation = rotation_cw;
-
-            // Transform gravity to world frame: g_world = R_cw^T * g_camera
-            gravity_world = initial_rotation.transpose() * gravity_camera;
-
-            float gravity_magnitude = gravity_camera.norm();
-
-            std::cout << "\n*** GRAVITY CALIBRATION COMPLETE ***" << std::endl;
-            std::cout << std::fixed << std::setprecision(4);
-            std::cout << "Gravity (camera frame): [" << gravity_camera.x() << ", "
-                     << gravity_camera.y() << ", " << gravity_camera.z() << "] m/s²" << std::endl;
-            std::cout << "Gravity (world frame):  [" << gravity_world.x() << ", "
-                     << gravity_world.y() << ", " << gravity_world.z() << "] m/s²" << std::endl;
-            std::cout << "Gravity magnitude: " << gravity_magnitude << " m/s² (expected ~9.81)" << std::endl;
-
-            if (std::abs(gravity_magnitude - 9.81f) > 2.0f) {
-                std::cout << "WARNING: Gravity magnitude differs significantly from 9.81 m/s²" << std::endl;
-                std::cout << "         Was the camera moving during calibration?" << std::endl;
-            } else {
-                std::cout << "Calibration looks good! Now you can move and rotate the camera." << std::endl;
-            }
-            std::cout << "Accelerometer readings will show dynamic acceleration only (gravity removed).\n" << std::endl;
-
-            gravity_calibrated = true;
-            calibration_samples.clear();  // Free memory
-        } else if (calibration_sample_count % 100 == 0) {
-            std::cout << "Calibrating gravity... " << calibration_sample_count
-                     << "/" << CALIBRATION_SAMPLES_NEEDED << " samples" << std::endl;
-        }
-
-        return gravity_calibrated;
-    }
-
-    void updateAcceleration(float ax, float ay, float az, const Eigen::Matrix3f& rotation_cw) {
-        // Apply gravity compensation if enabled and calibrated
-        float compensated_ax = ax;
-        float compensated_ay = ay;
-        float compensated_az = az;
-
-        if (gravity_compensation_enabled && gravity_calibrated) {
-            // Transform gravity from world frame to current camera frame
-            // g_camera_current = R_cw_current * g_world
-            Eigen::Vector3f gravity_camera_current = rotation_cw * gravity_world;
-
-            // Subtract gravity from accelerometer reading
-            compensated_ax -= gravity_camera_current.x();
-            compensated_ay -= gravity_camera_current.y();
-            compensated_az -= gravity_camera_current.z();
-        }
-
-        // Track min/max of compensated values
-        accel_x_min = std::min(accel_x_min, compensated_ax);
-        accel_x_max = std::max(accel_x_max, compensated_ax);
-        accel_y_min = std::min(accel_y_min, compensated_ay);
-        accel_y_max = std::max(accel_y_max, compensated_ay);
-        accel_z_min = std::min(accel_z_min, compensated_az);
-        accel_z_max = std::max(accel_z_max, compensated_az);
+    void updateVelocity(float vx, float vy, float vz) {
+        vel_x_min = std::min(vel_x_min, vx);
+        vel_x_max = std::max(vel_x_max, vx);
+        vel_y_min = std::min(vel_y_min, vy);
+        vel_y_max = std::max(vel_y_max, vy);
+        vel_z_min = std::min(vel_z_min, vz);
+        vel_z_max = std::max(vel_z_max, vz);
     }
 
     void updateGyro(float gx, float gy, float gz) {
@@ -246,23 +158,18 @@ public:
                      << "   MAX = " << std::setw(10) << pos_z_max
                      << "   RANGE = " << std::setw(10) << (pos_z_max - pos_z_min) << std::endl;
 
-            // Show acceleration with gravity compensation status
-            if (gravity_compensation_enabled && gravity_calibrated) {
-                std::cout << "\n--- ACCELERATION (m/s²) - GRAVITY COMPENSATED ---" << std::endl;
-            } else {
-                std::cout << "\n--- ACCELERATION (m/s²) - RAW (includes gravity) ---" << std::endl;
-            }
-            std::cout << "X-axis: MIN = " << std::setw(10) << accel_x_min
-                     << "   MAX = " << std::setw(10) << accel_x_max
-                     << "   RANGE = " << std::setw(10) << (accel_x_max - accel_x_min) << std::endl;
-            std::cout << "Y-axis: MIN = " << std::setw(10) << accel_y_min
-                     << "   MAX = " << std::setw(10) << accel_y_max
-                     << "   RANGE = " << std::setw(10) << (accel_y_max - accel_y_min) << std::endl;
-            std::cout << "Z-axis: MIN = " << std::setw(10) << accel_z_min
-                     << "   MAX = " << std::setw(10) << accel_z_max
-                     << "   RANGE = " << std::setw(10) << (accel_z_max - accel_z_min) << std::endl;
+            std::cout << "\n--- LINEAR VELOCITY (m/s) - FROM ORB-SLAM3 ---" << std::endl;
+            std::cout << "X-axis: MIN = " << std::setw(10) << vel_x_min
+                     << "   MAX = " << std::setw(10) << vel_x_max
+                     << "   RANGE = " << std::setw(10) << (vel_x_max - vel_x_min) << std::endl;
+            std::cout << "Y-axis: MIN = " << std::setw(10) << vel_y_min
+                     << "   MAX = " << std::setw(10) << vel_y_max
+                     << "   RANGE = " << std::setw(10) << (vel_y_max - vel_y_min) << std::endl;
+            std::cout << "Z-axis: MIN = " << std::setw(10) << vel_z_min
+                     << "   MAX = " << std::setw(10) << vel_z_max
+                     << "   RANGE = " << std::setw(10) << (vel_z_max - vel_z_min) << std::endl;
 
-            std::cout << "\n--- GYRO (rad/s) ---" << std::endl;
+            std::cout << "\n--- ANGULAR VELOCITY (rad/s) - FROM GYRO ---" << std::endl;
             std::cout << "X-axis: MIN = " << std::setw(10) << gyro_x_min
                      << "   MAX = " << std::setw(10) << gyro_x_max
                      << "   RANGE = " << std::setw(10) << (gyro_x_max - gyro_x_min) << std::endl;
@@ -283,24 +190,9 @@ public:
 };
 
 int main(int argc, char **argv) {
-    if(argc < 3 || argc > 4) {
-        std::cerr << "Usage: ./stereo_inertial_realsense_axis_test path_to_vocabulary path_to_settings [-g|--remove-gravity]" << std::endl;
-        std::cerr << "  -g, --remove-gravity : Remove gravity from accelerometer readings" << std::endl;
-        std::cerr << "                         (requires camera to be stationary for 2 seconds at startup)" << std::endl;
+    if(argc != 3) {
+        std::cerr << "Usage: ./stereo_inertial_realsense_axis_test path_to_vocabulary path_to_settings" << std::endl;
         return 1;
-    }
-
-    // Parse gravity compensation flag
-    bool enable_gravity_compensation = false;
-    if (argc == 4) {
-        std::string flag = argv[3];
-        if (flag == "-g" || flag == "--remove-gravity") {
-            enable_gravity_compensation = true;
-        } else {
-            std::cerr << "Unknown option: " << flag << std::endl;
-            std::cerr << "Use -g or --remove-gravity to enable gravity compensation" << std::endl;
-            return 1;
-        }
     }
 
     // Setup signal handler for clean shutdown
@@ -310,8 +202,8 @@ int main(int argc, char **argv) {
     // Create SLAM system
     ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, false);
 
-    // Create axis statistics tracker with optional gravity compensation
-    AxisStatistics stats(enable_gravity_compensation);
+    // Create axis statistics tracker
+    AxisStatistics stats;
 
     // Configure RealSense
     rs2::pipeline pipe;
@@ -382,8 +274,8 @@ int main(int argc, char **argv) {
             Sophus::SE3f Twc = Tcw.inverse();
             Eigen::Vector3f position = Twc.translation();
 
-            // Get rotation matrix from camera to world
-            Eigen::Matrix3f Rcw = Tcw.rotationMatrix();
+            // Get velocity from ORB-SLAM3
+            Eigen::Vector3f velocity = SLAM.GetVelocity();
 
             // Convert from ORB-SLAM3 camera frame to NED frame
             // ORB-SLAM3: X-right, Y-down, Z-forward
@@ -392,12 +284,14 @@ int main(int argc, char **argv) {
             float ned_y = -position.x();  // Right -> West, so negate for East
             float ned_z = position.y();   // Down -> Down
 
-            // Calibrate gravity if needed (requires valid camera pose)
-            stats.calibrateGravity(latest_accel.x(), latest_accel.y(), latest_accel.z(), Rcw);
+            // Transform velocity to NED frame (same transformation as position)
+            float ned_vx = velocity.z();   // Forward -> North
+            float ned_vy = -velocity.x();  // Right -> West, so negate for East
+            float ned_vz = velocity.y();   // Down -> Down
 
             // Update statistics
             stats.updatePosition(ned_x, ned_y, ned_z);
-            stats.updateAcceleration(latest_accel.x(), latest_accel.y(), latest_accel.z(), Rcw);
+            stats.updateVelocity(ned_vx, ned_vy, ned_vz);
             stats.updateGyro(latest_gyro.x(), latest_gyro.y(), latest_gyro.z());
 
             // Check if 10 seconds elapsed and reset statistics
