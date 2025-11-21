@@ -701,7 +701,7 @@ public:
 
 		//=========================================================================
 		// MavLink
-		const char* serial_port = "/dev/ttyTHS0";
+		const char* serial_port = "/dev/ttyTHS1";
 		int baud_rate = 1500000;
 
 		std::cout << "Starting MAVLink UART communication with threaded odometry" << std::endl;

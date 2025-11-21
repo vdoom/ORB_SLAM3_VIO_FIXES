@@ -495,7 +495,7 @@ public:
         std::cout << "GPS Origin: Lat=" << std::fixed << std::setprecision(7)
                   << origin_lat << " Lon=" << origin_lon << " Alt=" << origin_alt << "m" << std::endl;
 
-        const char* serial_port = "/dev/ttyTHS0";
+        const char* serial_port = "/dev/ttyTHS1";
         int baud_rate = 1500000;
 
         std::cout << "Starting MAVLink UART communication for GPS" << std::endl;
