@@ -146,7 +146,11 @@ private:
 public:
     MAVLinkInterface(const char* serial_port, int baud_rate = 57600, MAVLinkMode mode = MAVLinkMode::ODOMETRY)
         : system_id(255), component_id(197), running(false), connected(false), tx_mode(mode) {
-        
+
+        std::cout << "[DEBUG MAVLinkInterface] Constructor called with mode = " << static_cast<int>(mode)
+                  << " (0=ODOMETRY, 1=VISION_POS, 2=VISION_POS+SPEED)" << std::endl;
+        std::cout << "[DEBUG MAVLinkInterface] tx_mode set to = " << static_cast<int>(tx_mode) << std::endl;
+
         // Open serial port
         serial_fd = open(serial_port, O_RDWR | O_NOCTTY);
         if (serial_fd < 0) {
@@ -536,14 +540,18 @@ private:
 
     // Send data based on configured mode
     void sendData(const OdometryData& data) {
+        std::cout << "[DEBUG sendData] tx_mode = " << static_cast<int>(tx_mode) << " (0=ODOMETRY, 1=VISION_POS, 2=VISION_POS+SPEED)" << std::endl;
         switch (tx_mode) {
             case MAVLinkMode::ODOMETRY:
+                std::cout << "[DEBUG sendData] Calling sendOdometry()" << std::endl;
                 sendOdometry(data);
                 break;
             case MAVLinkMode::VISION_POSITION_ESTIMATE:
+                std::cout << "[DEBUG sendData] Calling sendVisionPositionEstimate()" << std::endl;
                 sendVisionPositionEstimate(data);
                 break;
             case MAVLinkMode::VISION_POSITION_AND_SPEED:
+                std::cout << "[DEBUG sendData] Calling sendVisionPositionEstimate() and sendVisionSpeedEstimate()" << std::endl;
                 sendVisionPositionEstimate(data);
                 sendVisionSpeedEstimate(data);
                 break;
@@ -885,16 +893,25 @@ int main(int argc, char **argv) {
 
     // Parse MAVLink mode
     MAVLinkMode mavlink_mode = MAVLinkMode::ODOMETRY;
+    std::cout << "[DEBUG main] argc = " << argc << std::endl;
     if (argc == 5) {
         int mode_val = std::atoi(argv[4]);
+        std::cout << "[DEBUG main] Mode argument (argv[4]) = " << argv[4] << ", parsed as " << mode_val << std::endl;
         if (mode_val == 1) {
             mavlink_mode = MAVLinkMode::VISION_POSITION_ESTIMATE;
+            std::cout << "[DEBUG main] Set mavlink_mode to VISION_POSITION_ESTIMATE (1)" << std::endl;
         } else if (mode_val == 2) {
             mavlink_mode = MAVLinkMode::VISION_POSITION_AND_SPEED;
+            std::cout << "[DEBUG main] Set mavlink_mode to VISION_POSITION_AND_SPEED (2)" << std::endl;
         } else if (mode_val != 0) {
             std::cerr << "Invalid mode: " << mode_val << ". Using ODOMETRY mode." << std::endl;
+        } else {
+            std::cout << "[DEBUG main] Using default ODOMETRY mode (0)" << std::endl;
         }
+    } else {
+        std::cout << "[DEBUG main] No mode argument provided, using default ODOMETRY mode (0)" << std::endl;
     }
+    std::cout << "[DEBUG main] Final mavlink_mode = " << static_cast<int>(mavlink_mode) << std::endl;
 
     // Create SLAM system
     ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, false);
