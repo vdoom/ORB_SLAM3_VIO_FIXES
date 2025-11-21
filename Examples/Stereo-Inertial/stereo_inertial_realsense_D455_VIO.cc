@@ -673,7 +673,7 @@ private:
     } latest_imu;
 
 public:
-    VIOLogger(const std::string& filename, MAVLinkMode mode = MAVLinkMode::ODOMETRY)
+    VIOLogger(MAVLinkMode mode = MAVLinkMode::ODOMETRY)
         : reset_counter(0)
         , isTracking(false)
         , prevIsTracking(false)
@@ -689,7 +689,7 @@ public:
         start_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
             now.time_since_epoch()).count();
 
-        std::cout << "VIO logging started. Output file: " << filename << std::endl;
+        std::cout << "VIO logging started." << std::endl;
         std::cout << "MAVLink mode: ";
         if (mode == MAVLinkMode::ODOMETRY) {
             std::cout << "ODOMETRY" << std::endl;
@@ -883,8 +883,8 @@ public:
 };
 
 int main(int argc, char **argv) {
-    if(argc < 4 || argc > 5) {
-        std::cerr << "Usage: ./stereo_inertial_realsense path_to_vocabulary path_to_settings output_file [mode]" << std::endl;
+    if(argc < 3 || argc > 4) {
+        std::cerr << "Usage: ./stereo_inertial_realsense path_to_vocabulary path_to_settings [mode]" << std::endl;
         std::cerr << "  mode: 0 = ODOMETRY (default)" << std::endl;
         std::cerr << "        1 = VISION_POSITION_ESTIMATE" << std::endl;
         std::cerr << "        2 = VISION_POSITION_ESTIMATE + VISION_SPEED_ESTIMATE" << std::endl;
@@ -894,9 +894,9 @@ int main(int argc, char **argv) {
     // Parse MAVLink mode
     MAVLinkMode mavlink_mode = MAVLinkMode::ODOMETRY;
     std::cout << "[DEBUG main] argc = " << argc << std::endl;
-    if (argc == 5) {
-        int mode_val = std::atoi(argv[4]);
-        std::cout << "[DEBUG main] Mode argument (argv[4]) = " << argv[4] << ", parsed as " << mode_val << std::endl;
+    if (argc == 4) {
+        int mode_val = std::atoi(argv[3]);
+        std::cout << "[DEBUG main] Mode argument (argv[3]) = " << argv[3] << ", parsed as " << mode_val << std::endl;
         if (mode_val == 1) {
             mavlink_mode = MAVLinkMode::VISION_POSITION_ESTIMATE;
             std::cout << "[DEBUG main] Set mavlink_mode to VISION_POSITION_ESTIMATE (1)" << std::endl;
@@ -917,7 +917,7 @@ int main(int argc, char **argv) {
     ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, false);
 
     // Create VIO logger with specified mode
-    VIOLogger vio_logger(argv[3], mavlink_mode);
+    VIOLogger vio_logger(mavlink_mode);
 
     // Configure RealSense
     rs2::pipeline pipe;
