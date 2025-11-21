@@ -343,6 +343,11 @@ target_link_libraries(uart_transfer_lib PRIVATE Threads::Threads)
 	target_include_directories(stereo_inertial_realsense_D455_VIO_GPS PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
 
+    add_executable(stereo_inertial_realsense_D455_VIO_GPS_v2
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS_v2.cc)
+	target_include_directories(stereo_inertial_realsense_D455_VIO_GPS_v2 PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS_v2 ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
+
     add_executable(stereo_inertial_realsense_D455_axis_test
             Examples/Stereo-Inertial/stereo_inertial_realsense_D455_axis_test.cc)
     target_link_libraries(stereo_inertial_realsense_D455_axis_test ${PROJECT_NAME})
