@@ -13,7 +13,6 @@ rs2_vector interpolateMeasure(const double target_time,
                               const rs2_vector current_data, const double current_time,
                               const rs2_vector prev_data, const double prev_time)
 {
-    // If there are not previous information, the current data is propagated
     if(prev_time == 0)
     {
         return current_data;
@@ -37,7 +36,6 @@ rs2_vector interpolateMeasure(const double target_time,
         value_interp.y = prev_data.y + increment.y * factor;
         value_interp.z = prev_data.z + increment.z * factor;
 
-        // Use current data (zero-order hold)
         value_interp = current_data;
     }
     else
@@ -64,26 +62,18 @@ rs2_vector interpolateMeasure(const double target_time,
 #include <condition_variable>
 #include <atomic>
 #include <memory>
-// Include MAVLink headers
 #include <common/mavlink.h>
 
-// Earth radius in meters (WGS84)
 const double EARTH_RADIUS = 6378137.0;
 
-// GPS coordinate conversion functions
 struct GPSCoord {
-    double lat;  // degrees
-    double lon;  // degrees
-    double alt;  // meters (MSL)
+    double lat;
+    double lon;
+    double alt;
 };
 
-// Convert NED offset (meters) to GPS coordinates relative to origin
 GPSCoord ned_to_gps(double north, double east, double down, const GPSCoord& origin) {
     GPSCoord result;
-
-    // Convert north/east offsets to lat/lon
-    // dLat = north / R_earth (in radians)
-    // dLon = east / (R_earth * cos(lat))
 
     double lat_rad = origin.lat * M_PI / 180.0;
 
@@ -92,29 +82,27 @@ GPSCoord ned_to_gps(double north, double east, double down, const GPSCoord& orig
 
     result.lat = origin.lat + (dLat * 180.0 / M_PI);
     result.lon = origin.lon + (dLon * 180.0 / M_PI);
-    result.alt = origin.alt - down;  // NED down is negative of altitude
+    result.alt = origin.alt - down;
 
     return result;
 }
 
-// Structure to hold GPS data
 struct GPSData {
     uint64_t time_usec;
-    int32_t lat;           // Latitude * 1e7 (degE7)
-    int32_t lon;           // Longitude * 1e7 (degE7)
-    int32_t alt;           // Altitude in mm (MSL)
-    float vn, ve, vd;      // Velocity NED (m/s)
-    uint16_t cog;          // Course over ground (cdeg)
-    uint8_t fix_type;      // GPS fix type
+    int32_t lat;
+    int32_t lon;
+    int32_t alt;
+    float vn, ve, vd;
+    uint16_t cog;
+    uint8_t fix_type;
     uint8_t satellites_visible;
-    uint16_t eph;          // GPS HDOP * 100
-    uint16_t epv;          // GPS VDOP * 100
-    uint16_t vel;          // Ground speed (cm/s)
-    int16_t vz;            // Vertical velocity (cm/s)
+    uint16_t eph;
+    uint16_t epv;
+    uint16_t vel;
+    int16_t vz;
     uint8_t reset_counter;
 };
 
-// Thread-safe queue for GPS data
 class GPSQueue {
 private:
     std::queue<GPSData> queue;
@@ -125,18 +113,15 @@ private:
 public:
     void push(const GPSData& data) {
         std::unique_lock<std::mutex> lock(mutex);
-
         if (queue.size() >= max_size) {
             queue.pop();
         }
-
         queue.push(data);
         cv.notify_one();
     }
 
     bool pop(GPSData& data, int timeout_ms = 100) {
         std::unique_lock<std::mutex> lock(mutex);
-
         if (cv.wait_for(lock, std::chrono::milliseconds(timeout_ms),
                         [this] { return !queue.empty(); })) {
             data = queue.front();
@@ -165,13 +150,20 @@ private:
     std::mutex connected_mutex;
     std::condition_variable connected_cv;
 
+    // GPS origin tracking
+    std::atomic<bool> gps_origin_received;
+    GPSCoord gps_origin;
+    std::mutex gps_origin_mutex;
+    std::condition_variable gps_origin_cv;
+
+    std::chrono::steady_clock::time_point last_waiting_msg_time;
+
 public:
     MAVLinkGPSInterface(const char* serial_port, int baud_rate = 57600)
-        : system_id(255), component_id(197), running(false), connected(false) {
+        : system_id(255), component_id(197), running(false), connected(false), gps_origin_received(false) {
 
         std::cout << "[MAVLinkGPSInterface] Initializing GPS interface" << std::endl;
 
-        // Open serial port
         serial_fd = open(serial_port, O_RDWR | O_NOCTTY);
         if (serial_fd < 0) {
             std::cerr << "Failed to open serial port " << serial_port
@@ -179,7 +171,6 @@ public:
             exit(1);
         }
 
-        // Configure serial port
         struct termios tty;
         memset(&tty, 0, sizeof(tty));
 
@@ -190,7 +181,6 @@ public:
             exit(1);
         }
 
-        // Set baud rate
         speed_t speed = B57600;
         switch (baud_rate) {
             case 9600:    speed = B9600; break;
@@ -216,7 +206,6 @@ public:
         cfsetospeed(&tty, speed);
         cfsetispeed(&tty, speed);
 
-        // 8N1 mode
         tty.c_cflag = (tty.c_cflag & ~CSIZE) | CS8;
         tty.c_cflag |= (CLOCAL | CREAD);
         tty.c_cflag &= ~(PARENB | PARODD);
@@ -239,6 +228,8 @@ public:
         }
 
         tcflush(serial_fd, TCIOFLUSH);
+
+        last_waiting_msg_time = std::chrono::steady_clock::now();
 
         std::cout << "MAVLink GPS interface initialized" << std::endl;
         std::cout << "Serial port: " << serial_port << std::endl;
@@ -266,6 +257,58 @@ public:
             }
             std::cout << "MAVLink GPS thread stopped" << std::endl;
         }
+    }
+
+    void setGPSOrigin(double lat, double lon, double alt) {
+        std::lock_guard<std::mutex> lock(gps_origin_mutex);
+        gps_origin.lat = lat;
+        gps_origin.lon = lon;
+        gps_origin.alt = alt;
+        gps_origin_received = true;
+        gps_origin_cv.notify_all();
+        std::cout << "[GPS Origin] Set from command line: Lat=" << std::fixed << std::setprecision(7)
+                  << lat << " Lon=" << lon << " Alt=" << std::setprecision(2) << alt << "m" << std::endl;
+    }
+
+    bool waitForGPSOrigin(int timeout_seconds = 0) {
+        std::unique_lock<std::mutex> lock(gps_origin_mutex);
+
+        if (gps_origin_received) {
+            return true;
+        }
+
+        std::cout << "\n========================================" << std::endl;
+        std::cout << "Waiting for GPS origin from ArduPilot..." << std::endl;
+        std::cout << "Listening for HOME_POSITION or GPS_GLOBAL_ORIGIN messages" << std::endl;
+        std::cout << "========================================\n" << std::endl;
+
+        if (timeout_seconds > 0) {
+            return gps_origin_cv.wait_for(lock, std::chrono::seconds(timeout_seconds),
+                                          [this] { return gps_origin_received.load(); });
+        } else {
+            // Wait indefinitely with periodic status messages
+            while (!gps_origin_received) {
+                auto now = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - last_waiting_msg_time).count();
+
+                if (elapsed >= 30) {
+                    std::cout << "[Status] Still waiting for GPS origin from ArduPilot..." << std::endl;
+                    last_waiting_msg_time = now;
+                }
+
+                gps_origin_cv.wait_for(lock, std::chrono::seconds(1));
+            }
+            return true;
+        }
+    }
+
+    bool hasGPSOrigin() const {
+        return gps_origin_received;
+    }
+
+    GPSCoord getGPSOrigin() {
+        std::lock_guard<std::mutex> lock(gps_origin_mutex);
+        return gps_origin;
     }
 
     void queueGPS(const GPSData& data) {
@@ -303,6 +346,7 @@ public:
 private:
     void run() {
         requestDataStream();
+        requestHomePosition();
 
         int heartbeat_counter = 0;
 
@@ -318,7 +362,7 @@ private:
 
             receiveMessages();
 
-            usleep(10000);  // 10ms
+            usleep(10000);
             heartbeat_counter++;
         }
     }
@@ -351,7 +395,28 @@ private:
         uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
         write(serial_fd, buf, len);
 
-        std::cout << "Requested data stream" << std::endl;
+        std::cout << "Requested data stream from ArduPilot" << std::endl;
+    }
+
+    void requestHomePosition() {
+        mavlink_message_t msg;
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+        // Request HOME_POSITION message
+        mavlink_msg_command_long_pack(
+            system_id,
+            component_id,
+            &msg,
+            1, 1,  // target system, target component
+            MAV_CMD_GET_HOME_POSITION,
+            0,     // confirmation
+            0, 0, 0, 0, 0, 0, 0  // params (unused)
+        );
+
+        uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        write(serial_fd, buf, len);
+
+        std::cout << "Requested HOME_POSITION from ArduPilot" << std::endl;
     }
 
     void sendGPSInput(const GPSData& data) {
@@ -363,23 +428,23 @@ private:
             component_id,
             &msg,
             data.time_usec,
-            0,  // GPS ID
-            0,  // ignore_flags (use all fields)
-            data.time_usec / 1000,  // time_week_ms
-            0,  // time_week
+            0,
+            0,
+            data.time_usec / 1000,
+            0,
             data.fix_type,
             data.lat,
             data.lon,
-            data.alt / 1000.0f,  // altitude in meters
-            data.eph / 100.0f,   // HDOP
-            data.epv / 100.0f,   // VDOP
-            data.vel / 100.0f,   // ground speed (m/s)
+            data.alt / 1000.0f,
+            data.eph / 100.0f,
+            data.epv / 100.0f,
+            data.vel / 100.0f,
             data.vn,
             data.ve,
             data.vd,
-            0.5f,  // speed accuracy
-            0.5f,  // horiz accuracy
-            0.5f,  // vert accuracy
+            0.5f,
+            0.5f,
+            0.5f,
             data.satellites_visible
         );
 
@@ -434,6 +499,52 @@ private:
                 }
                 break;
             }
+
+            // Listen for HOME_POSITION message (ID 242)
+            case MAVLINK_MSG_ID_HOME_POSITION: {
+                if (!gps_origin_received) {
+                    mavlink_home_position_t home_pos;
+                    mavlink_msg_home_position_decode(&msg, &home_pos);
+
+                    std::lock_guard<std::mutex> lock(gps_origin_mutex);
+                    gps_origin.lat = home_pos.latitude / 1e7;
+                    gps_origin.lon = home_pos.longitude / 1e7;
+                    gps_origin.alt = home_pos.altitude / 1000.0;  // mm to meters
+                    gps_origin_received = true;
+                    gps_origin_cv.notify_all();
+
+                    std::cout << "\n========================================" << std::endl;
+                    std::cout << "[GPS Origin] Received HOME_POSITION from ArduPilot" << std::endl;
+                    std::cout << "Lat: " << std::fixed << std::setprecision(7) << gps_origin.lat
+                              << " Lon: " << gps_origin.lon
+                              << " Alt: " << std::setprecision(2) << gps_origin.alt << "m" << std::endl;
+                    std::cout << "========================================\n" << std::endl;
+                }
+                break;
+            }
+
+            // Listen for GPS_GLOBAL_ORIGIN message (ID 49)
+            case MAVLINK_MSG_ID_GPS_GLOBAL_ORIGIN: {
+                if (!gps_origin_received) {
+                    mavlink_gps_global_origin_t global_origin;
+                    mavlink_msg_gps_global_origin_decode(&msg, &global_origin);
+
+                    std::lock_guard<std::mutex> lock(gps_origin_mutex);
+                    gps_origin.lat = global_origin.latitude / 1e7;
+                    gps_origin.lon = global_origin.longitude / 1e7;
+                    gps_origin.alt = global_origin.altitude / 1000.0;  // mm to meters
+                    gps_origin_received = true;
+                    gps_origin_cv.notify_all();
+
+                    std::cout << "\n========================================" << std::endl;
+                    std::cout << "[GPS Origin] Received GPS_GLOBAL_ORIGIN from ArduPilot" << std::endl;
+                    std::cout << "Lat: " << std::fixed << std::setprecision(7) << gps_origin.lat
+                              << " Lon: " << gps_origin.lon
+                              << " Alt: " << std::setprecision(2) << gps_origin.alt << "m" << std::endl;
+                    std::cout << "========================================\n" << std::endl;
+                }
+                break;
+            }
         }
     }
 };
@@ -446,14 +557,9 @@ private:
     bool isTracking;
     bool prevIsTracking;
 
-    // GPS origin (set this to your actual location)
-    GPSCoord gps_origin;
-
-    // Last known good GPS position
     bool hasLastGoodGPS;
     GPSCoord lastGoodGPS;
 
-    // Position offset tracking for resets
     float position_offset_x;
     float position_offset_y;
     float position_offset_z;
@@ -470,7 +576,7 @@ private:
     } latest_imu;
 
 public:
-    VIOGPSLogger(double origin_lat, double origin_lon, double origin_alt)
+    VIOGPSLogger()
         : reset_counter(0)
         , isTracking(false)
         , prevIsTracking(false)
@@ -479,21 +585,11 @@ public:
         , position_offset_y(0.0f)
         , position_offset_z(0.0f)
     {
-        // Set GPS origin
-        gps_origin.lat = origin_lat;
-        gps_origin.lon = origin_lon;
-        gps_origin.alt = origin_alt;
-
-        lastGoodGPS = gps_origin;  // Initialize to origin
-
-        // Get system start time
         auto now = std::chrono::high_resolution_clock::now();
         start_time_us = std::chrono::duration_cast<std::chrono::microseconds>(
             now.time_since_epoch()).count();
 
         std::cout << "VIO GPS logging started." << std::endl;
-        std::cout << "GPS Origin: Lat=" << std::fixed << std::setprecision(7)
-                  << origin_lat << " Lon=" << origin_lon << " Alt=" << origin_alt << "m" << std::endl;
 
         const char* serial_port = "/dev/ttyTHS1";
         int baud_rate = 1500000;
@@ -506,6 +602,23 @@ public:
     ~VIOGPSLogger() {
         if(mavlink)
             mavlink->stop();
+    }
+
+    void setGPSOrigin(double lat, double lon, double alt) {
+        mavlink->setGPSOrigin(lat, lon, alt);
+
+        // Initialize last good GPS to origin
+        lastGoodGPS.lat = lat;
+        lastGoodGPS.lon = lon;
+        lastGoodGPS.alt = alt;
+    }
+
+    bool waitForGPSOrigin() {
+        return mavlink->waitForGPSOrigin(0);  // Wait indefinitely
+    }
+
+    bool hasGPSOrigin() const {
+        return mavlink->hasGPSOrigin();
     }
 
     void SetTrackingState(bool tracking)
@@ -542,23 +655,26 @@ public:
 
     void logPose(double timestamp, const Sophus::SE3f& Tcw, const Eigen::Vector3f& velocity, bool tracking_good) {
 
+        if (!hasGPSOrigin()) {
+            // Don't log if we don't have GPS origin yet
+            return;
+        }
+
+        GPSCoord gps_origin = mavlink->getGPSOrigin();
+
         uint64_t timestamp_us = start_time_us + static_cast<uint64_t>(timestamp * 1e6);
 
-        // Get camera pose
         Sophus::SE3f Twc = Tcw.inverse();
         Eigen::Vector3f position = Twc.translation();
 
-        // Convert to NED frame
         float ned_x = position.z();
         float ned_y = -position.x();
         float ned_z = position.y();
 
-        // Apply position offset (for handling resets)
         ned_x += position_offset_x;
         ned_y += position_offset_y;
         ned_z += position_offset_z;
 
-        // Transform velocity to NED
         float ned_vx = velocity.z();
         float ned_vy = -velocity.x();
         float ned_vz = velocity.y();
@@ -574,64 +690,52 @@ public:
 
         if (!tracking_good || !isTracking)
         {
-            // Use last known good GPS position
             if (hasLastGoodGPS) {
                 gps_data.lat = static_cast<int32_t>(lastGoodGPS.lat * 1e7);
                 gps_data.lon = static_cast<int32_t>(lastGoodGPS.lon * 1e7);
                 gps_data.alt = static_cast<int32_t>(lastGoodGPS.alt * 1000);
             } else {
-                // Use origin if no good position yet
                 gps_data.lat = static_cast<int32_t>(gps_origin.lat * 1e7);
                 gps_data.lon = static_cast<int32_t>(gps_origin.lon * 1e7);
                 gps_data.alt = static_cast<int32_t>(gps_origin.alt * 1000);
             }
 
-            // Zero velocity when not tracking
             gps_data.vn = 0.0f;
             gps_data.ve = 0.0f;
             gps_data.vd = 0.0f;
             gps_data.vel = 0;
             gps_data.vz = 0;
 
-            gps_data.fix_type = 0;  // No fix when tracking lost
+            gps_data.fix_type = 0;
             gps_data.satellites_visible = 0;
-            gps_data.eph = 9999;  // High error
+            gps_data.eph = 9999;
             gps_data.epv = 9999;
 
             std::cout << "!!! GPS: Tracking lost - using last known position" << std::endl;
         }
         else
         {
-            // Convert NED position to GPS coordinates
             GPSCoord current_gps = ned_to_gps(ned_x, ned_y, ned_z, gps_origin);
 
-            // Check for position reset (large jump in position)
             if(hasLastGoodGPS) {
-                // If there's a large discontinuity, ORB-SLAM3 likely reset
-                // We should continue from last known GPS position
                 double lat_diff = std::abs(current_gps.lat - lastGoodGPS.lat);
                 double lon_diff = std::abs(current_gps.lon - lastGoodGPS.lon);
 
-                // If jump is larger than 10 meters, consider it a reset
                 if(lat_diff > 0.0001 || lon_diff > 0.0001) {
                     std::cout << "@@@ Large position jump detected - adjusting offset" << std::endl;
 
-                    // Calculate the offset needed to make current position continuous
                     GPSCoord offset_gps = ned_to_gps(ned_x - position_offset_x,
                                                       ned_y - position_offset_y,
                                                       ned_z - position_offset_z,
                                                       gps_origin);
 
-                    // Add offset to maintain continuity
                     double delta_lat = lastGoodGPS.lat - offset_gps.lat;
                     double delta_lon = lastGoodGPS.lon - offset_gps.lon;
 
-                    // Convert back to NED offset
                     double lat_rad = gps_origin.lat * M_PI / 180.0;
                     position_offset_x += delta_lat * EARTH_RADIUS * M_PI / 180.0;
                     position_offset_y += delta_lon * EARTH_RADIUS * cos(lat_rad) * M_PI / 180.0;
 
-                    // Recompute GPS with new offset
                     ned_x += position_offset_x;
                     ned_y += position_offset_y;
                     current_gps = ned_to_gps(ned_x, ned_y, ned_z, gps_origin);
@@ -642,26 +746,23 @@ public:
 
             gps_data.lat = static_cast<int32_t>(current_gps.lat * 1e7);
             gps_data.lon = static_cast<int32_t>(current_gps.lon * 1e7);
-            gps_data.alt = static_cast<int32_t>(current_gps.alt * 1000);  // mm
+            gps_data.alt = static_cast<int32_t>(current_gps.alt * 1000);
 
             gps_data.vn = ned_vx;
             gps_data.ve = ned_vy;
             gps_data.vd = ned_vz;
 
-            // Calculate ground speed and vertical speed
             float ground_speed = std::sqrt(ned_vx*ned_vx + ned_vy*ned_vy);
-            gps_data.vel = static_cast<uint16_t>(ground_speed * 100);  // cm/s
-            gps_data.vz = static_cast<int16_t>(ned_vz * 100);  // cm/s
+            gps_data.vel = static_cast<uint16_t>(ground_speed * 100);
+            gps_data.vz = static_cast<int16_t>(ned_vz * 100);
 
-            // Calculate course over ground
             gps_data.cog = static_cast<uint16_t>(std::atan2(ned_vy, ned_vx) * 180.0 / M_PI * 100);
 
-            gps_data.fix_type = 3;  // 3D fix
-            gps_data.satellites_visible = 12;  // Simulated good satellite count
-            gps_data.eph = 50;   // 0.5m horizontal accuracy
-            gps_data.epv = 50;   // 0.5m vertical accuracy
+            gps_data.fix_type = 3;
+            gps_data.satellites_visible = 12;
+            gps_data.eph = 50;
+            gps_data.epv = 50;
 
-            // Save as last known good position
             lastGoodGPS = current_gps;
             hasLastGoodGPS = true;
 
@@ -682,27 +783,26 @@ public:
 };
 
 int main(int argc, char **argv) {
-    if(argc < 6 || argc > 6) {
-        std::cerr << "Usage: ./stereo_inertial_realsense_gps path_to_vocabulary path_to_settings origin_lat origin_lon origin_alt" << std::endl;
-        std::cerr << "  origin_lat: GPS latitude of origin point (degrees)" << std::endl;
-        std::cerr << "  origin_lon: GPS longitude of origin point (degrees)" << std::endl;
-        std::cerr << "  origin_alt: GPS altitude of origin point (meters MSL)" << std::endl;
-        std::cerr << "Example: ./stereo_inertial_realsense_gps ORBvoc.txt settings.yaml 37.7749 -122.4194 10.0" << std::endl;
+    // Accept either 3 arguments (vocab, settings) or 6 arguments (vocab, settings, lat, lon, alt)
+    if(argc != 3 && argc != 6) {
+        std::cerr << "Usage: ./stereo_inertial_realsense_gps path_to_vocabulary path_to_settings [origin_lat origin_lon origin_alt]" << std::endl;
+        std::cerr << "\nWith GPS origin from command line:" << std::endl;
+        std::cerr << "  ./stereo_inertial_realsense_gps ORBvoc.txt settings.yaml 37.7749 -122.4194 10.0" << std::endl;
+        std::cerr << "\nWithout GPS origin (wait for ArduPilot HOME_POSITION):" << std::endl;
+        std::cerr << "  ./stereo_inertial_realsense_gps ORBvoc.txt settings.yaml" << std::endl;
         return 1;
     }
 
-    // Parse GPS origin
-    double origin_lat = std::atof(argv[3]);
-    double origin_lon = std::atof(argv[4]);
-    double origin_alt = std::atof(argv[5]);
+    bool gps_from_cmdline = (argc == 6);
 
-    std::cout << "GPS Origin: Lat=" << origin_lat << " Lon=" << origin_lon << " Alt=" << origin_alt << std::endl;
+    VIOGPSLogger vio_logger;
 
-    // Create SLAM system
-    ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, false);
-
-    // Create VIO GPS logger
-    VIOGPSLogger vio_logger(origin_lat, origin_lon, origin_alt);
+    if (gps_from_cmdline) {
+        double origin_lat = std::atof(argv[3]);
+        double origin_lon = std::atof(argv[4]);
+        double origin_alt = std::atof(argv[5]);
+        vio_logger.setGPSOrigin(origin_lat, origin_lon, origin_alt);
+    }
 
     // Configure RealSense
     rs2::pipeline pipe;
@@ -713,7 +813,6 @@ int main(int argc, char **argv) {
     cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F);
     cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F);
 
-    // IMU callback variables
     std::mutex imu_mutex;
     std::condition_variable cond_image_rec;
 
@@ -741,7 +840,6 @@ int main(int argc, char **argv) {
     Eigen::Vector3f latest_gyro(0, 0, 0);
     double latest_imu_timestamp = 0;
 
-    // IMU callback
     auto imu_callback = [&](const rs2::frame& frame)
     {
         std::unique_lock<std::mutex> lock(imu_mutex);
@@ -812,8 +910,9 @@ int main(int argc, char **argv) {
     std::vector<ORB_SLAM3::IMU::Point> vImuMeas;
     int frame_count = 0;
 
-    std::cout << "Starting VIO GPS tracking..." << std::endl;
-    std::cout << "Move the camera to initialize the system." << std::endl;
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "Connecting to ArduPilot..." << std::endl;
+    std::cout << "========================================\n" << std::endl;
 
     if(!vio_logger.WaitMavlink(30))
     {
@@ -825,7 +924,24 @@ int main(int argc, char **argv) {
         std::cout << "MavLink Connected!" << std::endl;
     }
 
-    // Clear IMU vectors
+    // Wait for GPS origin if not provided from command line
+    if (!gps_from_cmdline) {
+        if (!vio_logger.waitForGPSOrigin()) {
+            std::cout << "Failed to get GPS origin from ArduPilot!" << std::endl;
+            return 1;
+        }
+    }
+
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "GPS Origin Ready - Starting ORB-SLAM3" << std::endl;
+    std::cout << "========================================\n" << std::endl;
+
+    // Create SLAM system AFTER GPS origin is available
+    ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, false);
+
+    std::cout << "Starting VIO GPS tracking..." << std::endl;
+    std::cout << "Move the camera to initialize the system." << std::endl;
+
     v_gyro_data.clear();
     v_gyro_timestamp.clear();
     v_accel_data_sync.clear();
@@ -876,7 +992,6 @@ int main(int argc, char **argv) {
 
         frame_count++;
 
-        // Build IMU measurements
         for(size_t i = 0; i < vGyro.size(); ++i)
         {
             ORB_SLAM3::IMU::Point imu_point(vAccel[i].x, vAccel[i].y, vAccel[i].z,
@@ -892,7 +1007,6 @@ int main(int argc, char **argv) {
             vio_logger.updateIMUData(latest_imu_timestamp, latest_accel, latest_gyro);
         }
 
-        // Track
         Sophus::SE3f Tcw = SLAM.TrackStereo(left, right, timestamp, vImuMeas);
         Eigen::Vector3f velocity = SLAM.GetVelocity();
 
