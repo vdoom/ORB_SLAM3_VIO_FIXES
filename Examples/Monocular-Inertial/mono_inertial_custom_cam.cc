@@ -1,0 +1,718 @@
+/**
+ * Monocular-Inertial ORB-SLAM3 for Custom Camera (OV9281 + BMI160)
+ *
+ * Based on mono_inertial_realsense_D435i.cc but adapted for:
+ * - libcamera API instead of librealsense
+ * - BMI160 IMU via Raspberry Pi Pico over serial
+ * - Hardware-synchronized camera trigger (Pico triggers camera every 10 IMU samples)
+ * - Both accel and gyro at 200Hz (no interpolation needed)
+ *
+ * Usage: ./mono_inertial_custom_cam path_to_vocabulary path_to_settings [serial_port]
+ *        Default serial port: /dev/ttyACM0
+ */
+
+#include <signal.h>
+#include <stdlib.h>
+#include <iostream>
+#include <algorithm>
+#include <fstream>
+#include <chrono>
+#include <ctime>
+#include <sstream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <queue>
+#include <regex>
+
+#include <opencv2/core/core.hpp>
+#include <opencv2/imgproc/imgproc.hpp>
+
+#include <libcamera/libcamera.h>
+#include <libcamera/control_ids.h>
+
+#include <System.h>
+
+// Serial port includes
+#include <fcntl.h>
+#include <termios.h>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <cstring>
+#include <errno.h>
+
+using namespace std;
+using namespace libcamera;
+
+// ============================================================================
+// Global state
+// ============================================================================
+
+atomic<bool> b_continue_session{true};
+
+void exit_loop_handler(int s) {
+    cout << "\nFinishing session..." << endl;
+    b_continue_session = false;
+}
+
+// ============================================================================
+// IMU Data structures
+// ============================================================================
+
+struct IMUData {
+    uint64_t timestamp_ms = 0;
+    uint32_t interrupt_count = 0;
+    float accel_x = 0, accel_y = 0, accel_z = 0;  // in g
+    float gyro_x = 0, gyro_y = 0, gyro_z = 0;     // in deg/s
+};
+
+// Thread-safe queue for IMU data
+class IMUQueue {
+public:
+    void push(const IMUData& data) {
+        lock_guard<mutex> lock(mtx_);
+        queue_.push(data);
+    }
+
+    bool pop(IMUData& data) {
+        lock_guard<mutex> lock(mtx_);
+        if (queue_.empty()) return false;
+        data = queue_.front();
+        queue_.pop();
+        return true;
+    }
+
+    vector<IMUData> popAll() {
+        lock_guard<mutex> lock(mtx_);
+        vector<IMUData> result;
+        while (!queue_.empty()) {
+            result.push_back(queue_.front());
+            queue_.pop();
+        }
+        return result;
+    }
+
+    size_t size() const {
+        lock_guard<mutex> lock(mtx_);
+        return queue_.size();
+    }
+
+private:
+    mutable mutex mtx_;
+    queue<IMUData> queue_;
+};
+
+// ============================================================================
+// Serial IMU Reader
+// ============================================================================
+
+class SerialIMUReader {
+public:
+    SerialIMUReader() = default;
+    ~SerialIMUReader() { close(); }
+
+    bool open(const string& portName, int baudRate = 115200) {
+        fd_ = ::open(portName.c_str(), O_RDWR | O_NOCTTY);
+        if (fd_ < 0) {
+            cerr << "Failed to open " << portName << ": " << strerror(errno) << endl;
+            return false;
+        }
+
+        struct termios tty;
+        if (tcgetattr(fd_, &tty) != 0) {
+            cerr << "Failed to get terminal attributes: " << strerror(errno) << endl;
+            ::close(fd_);
+            fd_ = -1;
+            return false;
+        }
+
+        // Set baud rate
+        speed_t speed = B115200;
+        switch (baudRate) {
+            case 9600:   speed = B9600; break;
+            case 115200: speed = B115200; break;
+            case 230400: speed = B230400; break;
+            case 460800: speed = B460800; break;
+        }
+        cfsetospeed(&tty, speed);
+        cfsetispeed(&tty, speed);
+
+        // 8N1 mode
+        tty.c_cflag &= ~PARENB;
+        tty.c_cflag &= ~CSTOPB;
+        tty.c_cflag &= ~CSIZE;
+        tty.c_cflag |= CS8;
+        tty.c_cflag &= ~CRTSCTS;
+        tty.c_cflag |= CREAD | CLOCAL;
+
+        // Non-canonical mode
+        tty.c_lflag &= ~(ICANON | ECHO | ECHOE | ECHONL | ISIG);
+        tty.c_iflag &= ~(IXON | IXOFF | IXANY);
+        tty.c_iflag &= ~(IGNBRK | BRKINT | PARMRK | ISTRIP | INLCR | IGNCR | ICRNL);
+        tty.c_oflag &= ~(OPOST | ONLCR);
+
+        // Read timeout
+        tty.c_cc[VTIME] = 1;
+        tty.c_cc[VMIN] = 0;
+
+        if (tcsetattr(fd_, TCSANOW, &tty) != 0) {
+            cerr << "Failed to set terminal attributes: " << strerror(errno) << endl;
+            ::close(fd_);
+            fd_ = -1;
+            return false;
+        }
+
+        tcflush(fd_, TCIOFLUSH);
+        isOpen_ = true;
+        shouldStop_ = false;
+
+        // Start read thread
+        readThread_ = thread(&SerialIMUReader::readLoop, this);
+
+        cout << "Serial port opened: " << portName << " at " << baudRate << " baud" << endl;
+        return true;
+    }
+
+    void close() {
+        shouldStop_ = true;
+        if (readThread_.joinable()) {
+            readThread_.join();
+        }
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+        isOpen_ = false;
+    }
+
+    bool isOpen() const { return isOpen_; }
+
+    // Get all accumulated IMU data
+    vector<IMUData> getIMUData() {
+        return imuQueue_.popAll();
+    }
+
+    // Get latest camera trigger timestamp (returns 0 if none)
+    uint64_t getCameraTriggerTimestamp() {
+        lock_guard<mutex> lock(triggerMtx_);
+        uint64_t ts = cameraTriggerTimestamp_;
+        cameraTriggerTimestamp_ = 0;  // Clear after reading
+        return ts;
+    }
+
+private:
+    void readLoop() {
+        string lineBuffer;
+        char buf[256];
+
+        // Regex patterns
+        regex imuRegex(R"(timestamp:\s*(\d+);\s*\[INT\s*#(\d+)\]\s*A:\s*([-\d.]+),([-\d.]+),([-\d.]+)\s*g\s*\|\s*G:\s*([-\d.]+),([-\d.]+),([-\d.]+))");
+        regex triggerRegex(R"(Camera triggered timestamp:\s*(\d+))");
+
+        while (!shouldStop_ && fd_ >= 0) {
+            int n = ::read(fd_, buf, sizeof(buf) - 1);
+            if (n > 0) {
+                buf[n] = '\0';
+                lineBuffer += buf;
+
+                size_t pos;
+                while ((pos = lineBuffer.find('\n')) != string::npos) {
+                    string line = lineBuffer.substr(0, pos);
+                    lineBuffer = lineBuffer.substr(pos + 1);
+
+                    // Trim whitespace
+                    line.erase(0, line.find_first_not_of(" \t\r\n"));
+                    line.erase(line.find_last_not_of(" \t\r\n") + 1);
+
+                    if (line.empty()) continue;
+
+                    // Try to parse as camera trigger
+                    smatch triggerMatch;
+                    if (regex_search(line, triggerMatch, triggerRegex)) {
+                        uint64_t ts = stoull(triggerMatch[1].str());
+                        lock_guard<mutex> lock(triggerMtx_);
+                        cameraTriggerTimestamp_ = ts;
+                        continue;
+                    }
+
+                    // Try to parse as IMU data
+                    smatch imuMatch;
+                    if (regex_search(line, imuMatch, imuRegex)) {
+                        IMUData data;
+                        data.timestamp_ms = stoull(imuMatch[1].str());
+                        data.interrupt_count = stoul(imuMatch[2].str());
+                        data.accel_x = stof(imuMatch[3].str());
+                        data.accel_y = stof(imuMatch[4].str());
+                        data.accel_z = stof(imuMatch[5].str());
+                        data.gyro_x = stof(imuMatch[6].str());
+                        data.gyro_y = stof(imuMatch[7].str());
+                        data.gyro_z = stof(imuMatch[8].str());
+
+                        imuQueue_.push(data);
+                    }
+                }
+
+                // Prevent buffer overflow
+                if (lineBuffer.size() > 1024) {
+                    lineBuffer.clear();
+                }
+            }
+            this_thread::sleep_for(chrono::microseconds(100));
+        }
+    }
+
+    int fd_ = -1;
+    atomic<bool> isOpen_{false};
+    atomic<bool> shouldStop_{false};
+    thread readThread_;
+    IMUQueue imuQueue_;
+
+    mutex triggerMtx_;
+    uint64_t cameraTriggerTimestamp_ = 0;
+};
+
+// ============================================================================
+// Camera Controller (libcamera)
+// ============================================================================
+
+class CameraController {
+public:
+    CameraController() = default;
+    ~CameraController() { stop(); }
+
+    bool initialize(int cameraIndex = 0) {
+        cameraManager_ = make_unique<CameraManager>();
+        int ret = cameraManager_->start();
+        if (ret < 0) {
+            cerr << "Failed to start camera manager: " << strerror(-ret) << endl;
+            return false;
+        }
+
+        auto cameras = cameraManager_->cameras();
+        if (cameras.empty()) {
+            cerr << "No cameras found" << endl;
+            return false;
+        }
+
+        if (cameraIndex >= static_cast<int>(cameras.size())) {
+            cerr << "Camera index " << cameraIndex << " out of range" << endl;
+            return false;
+        }
+
+        camera_ = cameras[cameraIndex];
+        ret = camera_->acquire();
+        if (ret < 0) {
+            cerr << "Failed to acquire camera: " << strerror(-ret) << endl;
+            return false;
+        }
+
+        cout << "Acquired camera: " << camera_->id() << endl;
+
+        // Configure for 1280x800 R8 (grayscale)
+        config_ = camera_->generateConfiguration({StreamRole::Viewfinder});
+        if (!config_) {
+            cerr << "Failed to generate camera configuration" << endl;
+            return false;
+        }
+
+        StreamConfiguration& streamConfig = config_->at(0);
+        streamConfig.size = Size(1280, 800);
+        streamConfig.pixelFormat = formats::R8;
+
+        auto status = config_->validate();
+        if (status == CameraConfiguration::Invalid) {
+            cerr << "Invalid camera configuration" << endl;
+            return false;
+        }
+
+        if (status == CameraConfiguration::Adjusted) {
+            cout << "Camera configuration adjusted to: "
+                 << streamConfig.size.width << "x" << streamConfig.size.height
+                 << " " << streamConfig.pixelFormat.toString() << endl;
+        }
+
+        ret = camera_->configure(config_.get());
+        if (ret < 0) {
+            cerr << "Failed to configure camera: " << strerror(-ret) << endl;
+            return false;
+        }
+
+        frameWidth_ = streamConfig.size.width;
+        frameHeight_ = streamConfig.size.height;
+        frameStride_ = streamConfig.stride;
+        stream_ = streamConfig.stream();
+
+        // Allocate buffers
+        allocator_ = make_unique<FrameBufferAllocator>(camera_);
+        ret = allocator_->allocate(stream_);
+        if (ret < 0) {
+            cerr << "Failed to allocate buffers: " << strerror(-ret) << endl;
+            return false;
+        }
+
+        cout << "Allocated " << allocator_->buffers(stream_).size() << " buffers" << endl;
+
+        // Map buffers
+        for (const auto& buffer : allocator_->buffers(stream_)) {
+            for (const auto& plane : buffer->planes()) {
+                size_t length = plane.length;
+                if (length == 0) {
+                    length = lseek(plane.fd.get(), 0, SEEK_END);
+                    lseek(plane.fd.get(), 0, SEEK_SET);
+                }
+                void* mem = mmap(nullptr, length, PROT_READ, MAP_SHARED, plane.fd.get(), 0);
+                if (mem == MAP_FAILED) {
+                    cerr << "Failed to mmap buffer: " << strerror(errno) << endl;
+                    return false;
+                }
+                mappedBuffers_[buffer.get()] = {static_cast<uint8_t*>(mem), length};
+            }
+        }
+
+        // Create requests
+        for (const auto& buffer : allocator_->buffers(stream_)) {
+            auto request = camera_->createRequest();
+            if (!request) {
+                cerr << "Failed to create request" << endl;
+                return false;
+            }
+            request->addBuffer(stream_, buffer.get());
+            requests_.push_back(move(request));
+        }
+
+        // Connect callback
+        camera_->requestCompleted.connect(this, &CameraController::requestComplete);
+
+        cout << "Camera initialized: " << frameWidth_ << "x" << frameHeight_ << endl;
+        return true;
+    }
+
+    bool start() {
+        if (!camera_) return false;
+        if (running_) return true;
+
+        // Set frame duration for consistent FPS (50ms = 20 FPS for triggered mode)
+        ControlList controls;
+        int64_t frameDuration = 50000;  // 50ms = 20 FPS
+        controls.set(controls::FrameDurationLimits,
+                     Span<const int64_t, 2>({frameDuration, frameDuration}));
+        controls.set(controls::AeEnable, true);
+
+        int ret = camera_->start(&controls);
+        if (ret < 0) {
+            cerr << "Failed to start camera: " << strerror(-ret) << endl;
+            return false;
+        }
+
+        running_ = true;
+
+        // Queue all requests
+        for (auto& request : requests_) {
+            camera_->queueRequest(request.get());
+        }
+
+        cout << "Camera started" << endl;
+        return true;
+    }
+
+    void stop() {
+        if (!running_) return;
+        running_ = false;
+        if (camera_) {
+            camera_->stop();
+        }
+
+        // Cleanup
+        for (auto& [buffer, info] : mappedBuffers_) {
+            if (info.data) {
+                munmap(info.data, info.size);
+            }
+        }
+        mappedBuffers_.clear();
+
+        if (camera_) {
+            camera_->release();
+            camera_.reset();
+        }
+        if (cameraManager_) {
+            cameraManager_->stop();
+            cameraManager_.reset();
+        }
+
+        cout << "Camera stopped" << endl;
+    }
+
+    // Wait for next frame (blocking)
+    bool getFrame(cv::Mat& frame, double& timestamp) {
+        unique_lock<mutex> lock(frameMtx_);
+        if (!frameReady_) {
+            frameCond_.wait(lock, [this] { return frameReady_ || !running_; });
+        }
+
+        if (!running_) return false;
+
+        frame = currentFrame_.clone();
+        timestamp = currentTimestamp_;
+        frameReady_ = false;
+        return true;
+    }
+
+    int width() const { return frameWidth_; }
+    int height() const { return frameHeight_; }
+    bool isRunning() const { return running_; }
+
+private:
+    void requestComplete(Request* request) {
+        if (!running_) return;
+        if (request->status() == Request::RequestCancelled) return;
+
+        // Get buffer
+        FrameBuffer* buffer = request->buffers().begin()->second;
+        auto it = mappedBuffers_.find(buffer);
+        if (it == mappedBuffers_.end()) return;
+
+        // Convert to cv::Mat
+        const auto& info = it->second;
+
+        // Get timestamp (in microseconds from libcamera)
+        double timestamp = request->metadata().get(controls::SensorTimestamp).value_or(0) / 1e9;
+
+        // Create grayscale Mat
+        cv::Mat gray(frameHeight_, frameWidth_, CV_8UC1, info.data, frameStride_);
+
+        {
+            lock_guard<mutex> lock(frameMtx_);
+            gray.copyTo(currentFrame_);
+            currentTimestamp_ = timestamp;
+            frameReady_ = true;
+        }
+        frameCond_.notify_one();
+
+        // Requeue request
+        request->reuse(Request::ReuseBuffers);
+        camera_->queueRequest(request);
+    }
+
+    unique_ptr<CameraManager> cameraManager_;
+    shared_ptr<Camera> camera_;
+    unique_ptr<CameraConfiguration> config_;
+    unique_ptr<FrameBufferAllocator> allocator_;
+    vector<unique_ptr<Request>> requests_;
+    Stream* stream_ = nullptr;
+
+    struct BufferInfo {
+        uint8_t* data = nullptr;
+        size_t size = 0;
+    };
+    map<FrameBuffer*, BufferInfo> mappedBuffers_;
+
+    int frameWidth_ = 0;
+    int frameHeight_ = 0;
+    int frameStride_ = 0;
+
+    atomic<bool> running_{false};
+
+    mutex frameMtx_;
+    condition_variable frameCond_;
+    cv::Mat currentFrame_;
+    double currentTimestamp_ = 0;
+    bool frameReady_ = false;
+};
+
+// ============================================================================
+// Main
+// ============================================================================
+
+int main(int argc, char** argv) {
+    if (argc < 3 || argc > 4) {
+        cerr << endl
+             << "Usage: ./mono_inertial_custom_cam path_to_vocabulary path_to_settings [serial_port]"
+             << endl
+             << "  Default serial_port: /dev/ttyACM0"
+             << endl;
+        return 1;
+    }
+
+    string vocabularyPath = argv[1];
+    string settingsPath = argv[2];
+    string serialPort = (argc == 4) ? argv[3] : "/dev/ttyACM0";
+
+    // Setup signal handler
+    struct sigaction sigIntHandler;
+    sigIntHandler.sa_handler = exit_loop_handler;
+    sigemptyset(&sigIntHandler.sa_mask);
+    sigIntHandler.sa_flags = 0;
+    sigaction(SIGINT, &sigIntHandler, NULL);
+
+    cout << "========================================" << endl;
+    cout << "Monocular-Inertial VIO (Custom Camera)" << endl;
+    cout << "========================================" << endl;
+    cout << "Vocabulary: " << vocabularyPath << endl;
+    cout << "Settings:   " << settingsPath << endl;
+    cout << "IMU Port:   " << serialPort << endl;
+    cout << "========================================" << endl;
+
+    // Initialize IMU reader
+    SerialIMUReader imuReader;
+    if (!imuReader.open(serialPort)) {
+        cerr << "Failed to open IMU serial port: " << serialPort << endl;
+        cerr << "Check that:" << endl;
+        cerr << "  - Pico is connected and running" << endl;
+        cerr << "  - User has dialout group access: sudo usermod -aG dialout $USER" << endl;
+        return 1;
+    }
+
+    // Initialize camera
+    CameraController camera;
+    if (!camera.initialize(0)) {
+        cerr << "Failed to initialize camera" << endl;
+        return 1;
+    }
+
+    if (!camera.start()) {
+        cerr << "Failed to start camera" << endl;
+        return 1;
+    }
+
+    // Wait for first IMU data to establish time base
+    cout << "Waiting for IMU data..." << endl;
+    uint64_t firstImuTimestamp = 0;
+    while (b_continue_session && firstImuTimestamp == 0) {
+        auto imuData = imuReader.getIMUData();
+        if (!imuData.empty()) {
+            firstImuTimestamp = imuData.front().timestamp_ms;
+            cout << "First IMU timestamp: " << firstImuTimestamp << " ms" << endl;
+        }
+        this_thread::sleep_for(chrono::milliseconds(10));
+    }
+
+    if (!b_continue_session) {
+        cout << "Interrupted before initialization" << endl;
+        return 0;
+    }
+
+    // Create SLAM system
+    cout << "Creating ORB-SLAM3 system..." << endl;
+    ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, true);
+    float imageScale = SLAM.GetImageScale();
+
+    cout << "VIO system ready. Press Ctrl+C to exit." << endl;
+    cout << "========================================" << endl;
+
+    // Unit conversion constants
+    constexpr float DEG_TO_RAD = 0.0174532925f;  // pi/180
+    constexpr float G_TO_MS2 = 9.80665f;
+
+    // IMU measurements for current frame
+    vector<ORB_SLAM3::IMU::Point> vImuMeas;
+
+    // Statistics
+    uint64_t frameCount = 0;
+    uint64_t imuCount = 0;
+    auto startTime = chrono::steady_clock::now();
+
+    // Main loop
+    while (!SLAM.isShutDown() && b_continue_session) {
+        // Get all IMU data since last frame
+        auto imuData = imuReader.getIMUData();
+
+        for (const auto& imu : imuData) {
+            // Convert to SI units and create IMU::Point
+            // IMU timestamp in seconds (relative to first IMU timestamp)
+            double t = (imu.timestamp_ms - firstImuTimestamp) / 1000.0;
+
+            // Convert: gyro from deg/s to rad/s, accel from g to m/s²
+            ORB_SLAM3::IMU::Point pt(
+                imu.accel_x * G_TO_MS2,
+                imu.accel_y * G_TO_MS2,
+                imu.accel_z * G_TO_MS2,
+                imu.gyro_x * DEG_TO_RAD,
+                imu.gyro_y * DEG_TO_RAD,
+                imu.gyro_z * DEG_TO_RAD,
+                t
+            );
+            vImuMeas.push_back(pt);
+            imuCount++;
+        }
+
+        // Get camera frame
+        cv::Mat frame;
+        double cameraTimestamp;
+
+        if (!camera.getFrame(frame, cameraTimestamp)) {
+            continue;
+        }
+
+        // Get Pico trigger timestamp if available (more accurate than libcamera timestamp)
+        uint64_t triggerTimestamp = imuReader.getCameraTriggerTimestamp();
+        double frameTime;
+
+        if (triggerTimestamp > 0) {
+            // Use Pico timestamp (relative to first IMU timestamp)
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
+        } else {
+            // Fall back to estimating from last IMU timestamp
+            if (!vImuMeas.empty()) {
+                frameTime = vImuMeas.back().t;
+            } else {
+                // No IMU data yet, skip frame
+                continue;
+            }
+        }
+
+        // Resize if needed
+        if (imageScale != 1.0f) {
+            int newWidth = static_cast<int>(frame.cols * imageScale);
+            int newHeight = static_cast<int>(frame.rows * imageScale);
+            cv::resize(frame, frame, cv::Size(newWidth, newHeight));
+        }
+
+        // Track
+        SLAM.TrackMonocular(frame, frameTime, vImuMeas);
+
+        // Clear IMU measurements for next iteration
+        vImuMeas.clear();
+
+        frameCount++;
+
+        // Print statistics every 100 frames
+        if (frameCount % 100 == 0) {
+            auto now = chrono::steady_clock::now();
+            double elapsed = chrono::duration<double>(now - startTime).count();
+            double fps = frameCount / elapsed;
+            cout << "Frames: " << frameCount
+                 << " | IMU: " << imuCount
+                 << " | FPS: " << fixed << setprecision(1) << fps
+                 << " | Time: " << fixed << setprecision(1) << elapsed << "s"
+                 << endl;
+        }
+    }
+
+    // Cleanup
+    cout << endl << "Shutting down..." << endl;
+
+    camera.stop();
+    imuReader.close();
+
+    SLAM.Shutdown();
+
+    // Final statistics
+    auto endTime = chrono::steady_clock::now();
+    double totalTime = chrono::duration<double>(endTime - startTime).count();
+
+    cout << "========================================" << endl;
+    cout << "Session complete" << endl;
+    cout << "Total frames:  " << frameCount << endl;
+    cout << "Total IMU:     " << imuCount << endl;
+    cout << "Duration:      " << fixed << setprecision(1) << totalTime << " s" << endl;
+    cout << "Average FPS:   " << fixed << setprecision(1) << (frameCount / totalTime) << endl;
+    cout << "========================================" << endl;
+
+    // Save trajectory
+    SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");
+    SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
+    cout << "Trajectories saved to CameraTrajectory.txt and KeyFrameTrajectory.txt" << endl;
+
+    return 0;
+}

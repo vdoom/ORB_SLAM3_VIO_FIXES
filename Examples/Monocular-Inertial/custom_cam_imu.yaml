@@ -1,0 +1,104 @@
+%YAML:1.0
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters. Calibrated using Kalibr with April grid.
+# OV9281 global shutter monochrome camera, 1280x800
+#--------------------------------------------------------------------------------------------
+Camera.type: "PinHole"
+
+# Camera intrinsics from Kalibr calibration
+Camera.fx: 931.2556864170257
+Camera.fy: 941.3336437170927
+Camera.cx: 671.9437682726723
+Camera.cy: 364.53453739102963
+
+# Distortion parameters (radtan model: k1, k2, p1, p2)
+Camera.k1: -0.34373794746591807
+Camera.k2: 0.10314084333351141
+Camera.p1: 0.003791952384675785
+Camera.p2: -0.004418974792995762
+
+# Camera resolution
+Camera.width: 1280
+Camera.height: 800
+
+# Camera frames per second (triggered at every 10th IMU sample at 200Hz = 20 FPS)
+Camera.fps: 20.0
+
+# Color order of the images (0: BGR, 1: RGB, 2: Grayscale)
+Camera.RGB: 0
+
+#--------------------------------------------------------------------------------------------
+# IMU Parameters. BMI160 IMU via Raspberry Pi Pico.
+# Noise parameters from Kalibr IMU-camera calibration.
+#--------------------------------------------------------------------------------------------
+
+# IMU noise parameters (continuous-time, from Kalibr)
+# Kalibr outputs: accelerometer_noise_density, gyroscope_noise_density (in continuous time)
+# ORB-SLAM3 expects: IMU.NoiseGyro, IMU.NoiseAcc (same units)
+IMU.NoiseGyro: 0.000187
+IMU.NoiseAcc: 0.00186
+IMU.GyroWalk: 2.66e-05
+IMU.AccWalk: 0.000433
+
+# IMU sampling frequency
+IMU.Frequency: 200.0
+
+#--------------------------------------------------------------------------------------------
+# Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
+#--------------------------------------------------------------------------------------------
+
+# Transformation from body-frame (IMU) to camera (T_cam_imu from Kalibr)
+# This is a 4x4 SE(3) transformation matrix
+Tbc: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: f
+   data: [-0.9990322631159619, 0.022093831369327854, 0.03803156411223243, 0.003979416471491828,
+          -0.021283357149617516, -0.9995404441000842, 0.02158516427197432, -0.0013183295612635558,
+          0.03849098546206587, 0.02075483615040109, 0.9990433828490777, -0.10558511563361736,
+          0.0, 0.0, 0.0, 1.0]
+
+# Time offset: Time_camera = Time_imu + td (in seconds)
+# From Kalibr timeshift_cam_imu: 0.011805865906645887
+# Note: Positive value means camera timestamps are ahead of IMU
+Camera.TimeOffset: 0.011805865906645887
+
+# Insert KFs when there is no visual odometry (in seconds)
+# Set to IMU rate to handle lost tracking gracefully
+IMU.InsertKFsWhenLost: 0
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+
+# ORB Extractor: Number of features per image
+ORBextractor.nFeatures: 1000
+
+# ORB Extractor: Scale factor between levels in the scale pyramid
+ORBextractor.scaleFactor: 1.2
+
+# ORB Extractor: Number of levels in the scale pyramid
+ORBextractor.nLevels: 8
+
+# ORB Extractor: Fast threshold
+# Image is divided in a grid. At each cell FAST are extracted imposing a minimum response.
+# Firstly we impose iniThFAST. If no corners are detected we impose a lower value minThFAST
+ORBextractor.iniThFAST: 20
+ORBextractor.minThFAST: 7
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500.0
+
+Viewer.imageViewScale: 1.0
