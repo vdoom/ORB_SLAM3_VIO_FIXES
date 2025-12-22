@@ -289,7 +289,17 @@ if(realsense2_FOUND)
             Examples/Monocular/mono_realsense_D435i.cc)
     target_link_libraries(mono_realsense_D435i ${PROJECT_NAME})
 endif()
- 
+
+# Custom camera with libcamera (OV9281)
+if(LIBCAMERA_FOUND)
+    add_executable(mono_custom_cam
+            Examples/Monocular/mono_custom_cam.cc)
+    target_compile_features(mono_custom_cam PRIVATE cxx_std_17)
+    target_include_directories(mono_custom_cam PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
+    target_compile_options(mono_custom_cam PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
+    target_link_libraries(mono_custom_cam ${PROJECT_NAME} ${LIBCAMERA_LIBRARIES})
+endif()
+
 #Monocular inertial examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Monocular-Inertial)
  
