@@ -1,2 +1,0 @@
-# Test file for submodule push verification
-# Created to verify GitHub token access works for submodule operations
