@@ -7,10 +7,10 @@
 Camera.type: "PinHole"
 
 # Camera intrinsics from Kalibr calibration
-Camera.fx: 931.2556864170257
-Camera.fy: 941.3336437170927
-Camera.cx: 671.9437682726723
-Camera.cy: 364.53453739102963
+#Camera.fx: 931.2556864170257
+#Camera.fy: 941.3336437170927
+#Camera.cx: 671.9437682726723
+#Camera.cy: 364.53453739102963
 
 # Distortion parameters (radtan model: k1, k2, p1, p2)
 Camera.k1: -0.34373794746591807
@@ -18,9 +18,18 @@ Camera.k2: 0.10314084333351141
 Camera.p1: 0.003791952384675785
 Camera.p2: -0.004418974792995762
 
+# Camera intrinsics (scaled by 0.5 for 640x400)
+Camera.fx: 465.6278432085129
+Camera.fy: 470.6668218585464
+Camera.cx: 335.9718841363362
+Camera.cy: 182.26726869551482
+
 # Camera resolution
-Camera.width: 1280
-Camera.height: 800
+Camera.width: 640
+Camera.height: 400
+# Camera resolution
+#Camera.width: 1280
+#Camera.height: 800
 
 # Camera frames per second
 Camera.fps: 30.0

@@ -192,7 +192,7 @@ public:
         }
 
         StreamConfiguration& streamConfig = config_->at(0);
-        streamConfig.size = Size(1280, 800);
+        streamConfig.size = Size(640, 400);//Size(1280, 800);
         streamConfig.pixelFormat = formats::R8;
 
         cout << "Requesting format: R8 (8-bit grayscale) at 1280x800" << endl;
