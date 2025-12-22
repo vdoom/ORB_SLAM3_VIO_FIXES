@@ -53,6 +53,19 @@ find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(realsense2)
 
+# Check for libcamera (for custom camera support)
+find_package(PkgConfig QUIET)
+if(PkgConfig_FOUND)
+    pkg_check_modules(LIBCAMERA libcamera)
+    if(LIBCAMERA_FOUND)
+        message(STATUS "libcamera found: ${LIBCAMERA_VERSION}")
+    else()
+        message(STATUS "libcamera not found - custom camera examples will not be built")
+    endif()
+else()
+    message(STATUS "PkgConfig not found - custom camera examples will not be built")
+endif()
+
 # Include FetchContent for downloading dependencies
 include(FetchContent)
 
@@ -296,6 +309,16 @@ if(realsense2_FOUND)
     add_executable(mono_inertial_realsense_D435i
             Examples/Monocular-Inertial/mono_inertial_realsense_D435i.cc)
     target_link_libraries(mono_inertial_realsense_D435i ${PROJECT_NAME})
+endif()
+
+# Custom camera with libcamera (OV9281 + BMI160 via Pico)
+if(LIBCAMERA_FOUND)
+    add_executable(mono_inertial_custom_cam
+            Examples/Monocular-Inertial/mono_inertial_custom_cam.cc)
+    target_compile_features(mono_inertial_custom_cam PRIVATE cxx_std_17)
+    target_include_directories(mono_inertial_custom_cam PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
+    target_compile_options(mono_inertial_custom_cam PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
+    target_link_libraries(mono_inertial_custom_cam ${PROJECT_NAME} ${LIBCAMERA_LIBRARIES})
 endif()
 
 #Stereo Inertial examples
