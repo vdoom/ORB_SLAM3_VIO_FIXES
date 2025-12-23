@@ -421,6 +421,7 @@ public:
         frameWidth_ = streamConfig.size.width;
         frameHeight_ = streamConfig.size.height;
         frameStride_ = streamConfig.stride;
+        pixelFormat_ = streamConfig.pixelFormat;
         stream_ = streamConfig.stream();
  
         // Allocate buffers
@@ -464,7 +465,22 @@ public:
         // Connect callback
         camera_->requestCompleted.connect(this, &CameraController::requestComplete);
  
-        cout << "Camera initialized: " << frameWidth_ << "x" << frameHeight_ << endl;
+        cout << "Camera initialized: " << frameWidth_ << "x" << frameHeight_
+             << " stride: " << frameStride_
+             << " format: " << pixelFormat_.toString() << endl;
+
+        // Check format support
+        if (pixelFormat_ == formats::R8) {
+            cout << "  -> Using R8 (8-bit grayscale) - optimal" << endl;
+        } else if (pixelFormat_ == formats::R16) {
+            cout << "  -> Using R16 (16-bit grayscale) - will convert 10-bit to 8-bit" << endl;
+        } else if (pixelFormat_ == formats::XRGB8888 || pixelFormat_ == formats::XBGR8888) {
+            cout << "  -> Using XRGB8888 (32-bit) - will extract grayscale channel" << endl;
+        } else {
+            cout << "  -> Warning: Format " << pixelFormat_.toString()
+                 << " may not be fully supported" << endl;
+        }
+
         return true;
     }
  
@@ -588,15 +604,55 @@ private:
         auto it = mappedBuffers_.find(buffer);
         if (it == mappedBuffers_.end()) return;
  
-        // Convert to cv::Mat
         const auto& info = it->second;
- 
-        // Get timestamp (in microseconds from libcamera)
-        double timestamp = request->metadata().get(controls::SensorTimestamp).value_or(0) / 1e9;
- 
-        // Create grayscale Mat
-        cv::Mat gray(frameHeight_, frameWidth_, CV_8UC1, info.data, frameStride_);
- 
+
+        // Get timestamp (SensorTimestamp is in nanoseconds)
+        auto tsOpt = request->metadata().get(controls::SensorTimestamp);
+        double timestamp = tsOpt.value_or(0) / 1e9;  // Convert to seconds
+
+        // Convert to cv::Mat based on pixel format
+        cv::Mat gray;
+
+        if (pixelFormat_ == formats::R8) {
+            // Direct 8-bit grayscale
+            gray = cv::Mat(frameHeight_, frameWidth_, CV_8UC1, info.data, frameStride_);
+        } else if (pixelFormat_ == formats::R16) {
+            // 16-bit grayscale - OV9281 outputs 10-bit packed into 16-bit
+            // Data is in upper bits, shift right by 8 to get 8-bit value
+            gray = cv::Mat(frameHeight_, frameWidth_, CV_8UC1);
+            const uint16_t* src = reinterpret_cast<const uint16_t*>(info.data);
+            int srcStride = frameStride_ / 2;  // Stride is in bytes, convert to uint16 elements
+
+            for (int y = 0; y < frameHeight_; y++) {
+                const uint16_t* srcLine = src + y * srcStride;
+                uint8_t* dstLine = gray.ptr<uint8_t>(y);
+                for (int x = 0; x < frameWidth_; x++) {
+                    dstLine[x] = static_cast<uint8_t>(srcLine[x] >> 8);
+                }
+            }
+        } else if (pixelFormat_ == formats::XRGB8888 || pixelFormat_ == formats::XBGR8888) {
+            // 32-bit XRGB - for mono camera, all channels are same, just take one
+            gray = cv::Mat(frameHeight_, frameWidth_, CV_8UC1);
+            for (int y = 0; y < frameHeight_; y++) {
+                const uint8_t* srcLine = info.data + y * frameStride_;
+                uint8_t* dstLine = gray.ptr<uint8_t>(y);
+                for (int x = 0; x < frameWidth_; x++) {
+                    // Take blue channel (first byte in BGRX layout)
+                    dstLine[x] = srcLine[x * 4];
+                }
+            }
+        } else if (pixelFormat_ == formats::RGB888) {
+            cv::Mat rgb(frameHeight_, frameWidth_, CV_8UC3, info.data, frameStride_);
+            cv::cvtColor(rgb, gray, cv::COLOR_RGB2GRAY);
+        } else if (pixelFormat_ == formats::BGR888) {
+            cv::Mat bgr(frameHeight_, frameWidth_, CV_8UC3, info.data, frameStride_);
+            cv::cvtColor(bgr, gray, cv::COLOR_BGR2GRAY);
+        } else {
+            // Unsupported format - try to use as grayscale anyway
+            cerr << "Warning: Unknown pixel format, attempting raw grayscale interpretation" << endl;
+            gray = cv::Mat(frameHeight_, frameWidth_, CV_8UC1, info.data, frameStride_);
+        }
+
         {
             lock_guard<mutex> lock(frameMtx_);
             gray.copyTo(currentFrame_);
@@ -604,7 +660,7 @@ private:
             frameReady_ = true;
         }
         frameCond_.notify_one();
- 
+
         // Requeue request
         request->reuse(Request::ReuseBuffers);
         camera_->queueRequest(request);
@@ -616,6 +672,7 @@ private:
     unique_ptr<FrameBufferAllocator> allocator_;
     vector<unique_ptr<Request>> requests_;
     Stream* stream_ = nullptr;
+    PixelFormat pixelFormat_;
  
     struct BufferInfo {
         uint8_t* data = nullptr;
