@@ -783,7 +783,23 @@ int main(int argc, char** argv) {
     cout << "Creating ORB-SLAM3 system..." << endl;
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, true);
     float imageScale = SLAM.GetImageScale();
- 
+
+    // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
+    // and reset time base to avoid huge initial backlog
+    cout << "Clearing IMU buffer accumulated during initialization..." << endl;
+    imuReader.getIMUData();  // Discard accumulated data
+
+    // Wait for fresh IMU data to establish new time base
+    firstImuTimestamp = 0;
+    while (b_continue_session && firstImuTimestamp == 0) {
+        auto imuData = imuReader.getIMUData();
+        if (!imuData.empty()) {
+            firstImuTimestamp = imuData.back().timestamp_ms;
+            cout << "Reset time base to: " << firstImuTimestamp << " ms" << endl;
+        }
+        this_thread::sleep_for(chrono::milliseconds(5));
+    }
+
     cout << "VIO system ready. Press Ctrl+C to exit." << endl;
     cout << "========================================" << endl;
  
@@ -848,15 +864,42 @@ int main(int argc, char** argv) {
             }
         }
 
+        // Filter IMU measurements: only keep those with timestamp <= frameTime
+        // Keep measurements after frameTime for next iteration
+        vector<ORB_SLAM3::IMU::Point> vImuForFrame;
+        vector<ORB_SLAM3::IMU::Point> vImuForNext;
+
+        for (const auto& pt : vImuMeas) {
+            if (pt.t <= frameTime) {
+                vImuForFrame.push_back(pt);
+            } else {
+                vImuForNext.push_back(pt);
+            }
+        }
+
         // Debug: Print timing info for first 20 frames
         if (frameCount < 20) {
             cout << "Frame " << frameCount << ": t=" << fixed << setprecision(3) << frameTime
-                 << " IMU=" << vImuMeas.size();
-            if (!vImuMeas.empty()) {
-                cout << " range=[" << vImuMeas.front().t << "," << vImuMeas.back().t << "]";
+                 << " IMU=" << vImuForFrame.size() << "/" << vImuMeas.size();
+            if (!vImuForFrame.empty()) {
+                cout << " range=[" << vImuForFrame.front().t << "," << vImuForFrame.back().t << "]";
             }
             cout << " trigger=" << (triggerTimestamp > 0 ? "yes" : "NO");
+            if (!vImuForNext.empty()) {
+                cout << " kept=" << vImuForNext.size();
+            }
             cout << endl;
+        }
+
+        // Keep IMU data after frame time for next iteration
+        vImuMeas = std::move(vImuForNext);
+
+        // Need at least some IMU data to track
+        if (vImuForFrame.empty()) {
+            if (frameCount < 20) {
+                cout << "  -> Skipping frame: no IMU data" << endl;
+            }
+            continue;
         }
 
         // Resize if needed
@@ -866,11 +909,8 @@ int main(int argc, char** argv) {
             cv::resize(frame, frame, cv::Size(newWidth, newHeight));
         }
 
-        // Track
-        SLAM.TrackMonocular(frame, frameTime, vImuMeas);
-
-        // Clear IMU measurements for next iteration
-        vImuMeas.clear();
+        // Track with filtered IMU data
+        SLAM.TrackMonocular(frame, frameTime, vImuForFrame);
  
         frameCount++;
  
