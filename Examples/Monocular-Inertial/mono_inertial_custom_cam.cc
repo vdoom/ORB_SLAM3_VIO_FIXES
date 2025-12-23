@@ -842,21 +842,14 @@ int main(int argc, char** argv) {
 
         // Get Pico trigger timestamp
         uint64_t triggerTimestamp = imuReader.getCameraTriggerTimestamp();
-        double frameTime;
 
-        if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            // Use Pico timestamp (relative to first IMU timestamp)
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
-        } else if (triggerTimestamp > 0 && triggerTimestamp < firstImuTimestamp) {
-            // Trigger timestamp is from before our time base - skip this frame
+        // Check for invalid trigger (before our time base)
+        if (triggerTimestamp > 0 && triggerTimestamp < firstImuTimestamp) {
             if (frameCount < 20) {
                 cout << "Skipping frame with old trigger timestamp: " << triggerTimestamp
                      << " < " << firstImuTimestamp << endl;
             }
             continue;
-        } else {
-            // No trigger - use camera timestamp as fallback
-            frameTime = cameraTimestamp;
         }
 
         // NOW get all IMU data (after camera frame, so we have data up to trigger time)
@@ -889,6 +882,27 @@ int main(int argc, char** argv) {
             );
             vImuMeas.push_back(pt);
             imuCount++;
+        }
+
+        // Determine frame time
+        double frameTime;
+        if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
+            // Use Pico timestamp (relative to first IMU timestamp)
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
+        } else {
+            // No trigger - fall back to last IMU timestamp
+            if (!vImuMeas.empty()) {
+                frameTime = vImuMeas.back().t;
+                if (frameCount < 20) {
+                    cout << "No trigger, using last IMU time: " << fixed << setprecision(3) << frameTime << endl;
+                }
+            } else {
+                // No IMU data yet, skip frame
+                if (frameCount < 20) {
+                    cout << "Skipping frame: no trigger and no IMU data" << endl;
+                }
+                continue;
+            }
         }
 
         // Filter IMU measurements: only keep those with timestamp <= frameTime
