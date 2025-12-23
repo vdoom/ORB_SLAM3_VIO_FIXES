@@ -273,11 +273,14 @@ public:
         return imuQueue_.popAll();
     }
  
-    // Get latest camera trigger timestamp (returns 0 if none)
+    // Get next camera trigger timestamp from queue (returns 0 if empty)
     uint64_t getCameraTriggerTimestamp() {
         lock_guard<mutex> lock(triggerMtx_);
-        uint64_t ts = cameraTriggerTimestamp_;
-        cameraTriggerTimestamp_ = 0;  // Clear after reading
+        if (triggerQueue_.empty()) {
+            return 0;
+        }
+        uint64_t ts = triggerQueue_.front();
+        triggerQueue_.pop();
         return ts;
     }
  
@@ -312,7 +315,7 @@ private:
                     if (regex_search(line, triggerMatch, triggerRegex)) {
                         uint64_t ts = stoull(triggerMatch[1].str());
                         lock_guard<mutex> lock(triggerMtx_);
-                        cameraTriggerTimestamp_ = ts;
+                        triggerQueue_.push(ts);  // Queue trigger (FIFO order)
                         continue;
                     }
  
@@ -349,7 +352,7 @@ private:
     IMUQueue imuQueue_;
  
     mutex triggerMtx_;
-    uint64_t cameraTriggerTimestamp_ = 0;
+    queue<uint64_t> triggerQueue_;  // Queue of camera trigger timestamps (FIFO)
 };
  
 // ============================================================================
