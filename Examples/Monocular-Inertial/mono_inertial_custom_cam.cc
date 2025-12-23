@@ -397,7 +397,7 @@ public:
         }
  
         StreamConfiguration& streamConfig = config_->at(0);
-        streamConfig.size = Size(1280, 800);
+        streamConfig.size = Size(640, 400);
         streamConfig.pixelFormat = formats::R8;
  
         auto status = config_->validate();
