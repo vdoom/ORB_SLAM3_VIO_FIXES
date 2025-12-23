@@ -826,15 +826,56 @@ int main(int argc, char** argv) {
     uint64_t imuCount = 0;
     auto startTime = chrono::steady_clock::now();
  
+    // Track previous IMU timestamp for gap detection
+    double lastImuTimestamp = 0;
+    int imuGapWarnings = 0;
+
     // Main loop
     while (!SLAM.isShutDown() && b_continue_session) {
-        // Get all IMU data since last frame
+        // Get camera frame FIRST (this blocks until frame is ready)
+        cv::Mat frame;
+        double cameraTimestamp;
+
+        if (!camera.getFrame(frame, cameraTimestamp)) {
+            continue;
+        }
+
+        // Get Pico trigger timestamp
+        uint64_t triggerTimestamp = imuReader.getCameraTriggerTimestamp();
+        double frameTime;
+
+        if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
+            // Use Pico timestamp (relative to first IMU timestamp)
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
+        } else if (triggerTimestamp > 0 && triggerTimestamp < firstImuTimestamp) {
+            // Trigger timestamp is from before our time base - skip this frame
+            if (frameCount < 20) {
+                cout << "Skipping frame with old trigger timestamp: " << triggerTimestamp
+                     << " < " << firstImuTimestamp << endl;
+            }
+            continue;
+        } else {
+            // No trigger - use camera timestamp as fallback
+            frameTime = cameraTimestamp;
+        }
+
+        // NOW get all IMU data (after camera frame, so we have data up to trigger time)
         auto imuData = imuReader.getIMUData();
  
         for (const auto& imu : imuData) {
             // Convert to SI units and create IMU::Point
-            // IMU timestamp in seconds (relative to first IMU timestamp)
             double t = (imu.timestamp_ms - firstImuTimestamp) / 1000.0;
+
+            // Check for gaps in IMU stream (should be ~5ms at 200Hz)
+            if (lastImuTimestamp > 0 && t > lastImuTimestamp) {
+                double gap = t - lastImuTimestamp;
+                if (gap > 0.010 && imuGapWarnings < 10) {  // More than 10ms gap
+                    cout << "WARNING: IMU gap detected: " << fixed << setprecision(1)
+                         << gap * 1000 << "ms at t=" << setprecision(3) << t << endl;
+                    imuGapWarnings++;
+                }
+            }
+            lastImuTimestamp = t;
  
             // Convert: gyro from deg/s to rad/s, accel from g to m/s²
             ORB_SLAM3::IMU::Point pt(
@@ -848,38 +889,6 @@ int main(int argc, char** argv) {
             );
             vImuMeas.push_back(pt);
             imuCount++;
-        }
- 
-        // Get camera frame
-        cv::Mat frame;
-        double cameraTimestamp;
- 
-        if (!camera.getFrame(frame, cameraTimestamp)) {
-            continue;
-        }
- 
-        // Get Pico trigger timestamp if available (more accurate than libcamera timestamp)
-        uint64_t triggerTimestamp = imuReader.getCameraTriggerTimestamp();
-        double frameTime;
- 
-        if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            // Use Pico timestamp (relative to first IMU timestamp)
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
-        } else if (triggerTimestamp > 0 && triggerTimestamp < firstImuTimestamp) {
-            // Trigger timestamp is from before our time base - skip this frame
-            if (frameCount < 20) {
-                cout << "Skipping frame with old trigger timestamp: " << triggerTimestamp
-                     << " < " << firstImuTimestamp << endl;
-            }
-            continue;
-        } else {
-            // No trigger timestamp - fall back to estimating from last IMU timestamp
-            if (!vImuMeas.empty()) {
-                frameTime = vImuMeas.back().t;
-            } else {
-                // No IMU data yet, skip frame
-                continue;
-            }
         }
 
         // Filter IMU measurements: only keep those with timestamp <= frameTime
@@ -901,6 +910,11 @@ int main(int argc, char** argv) {
                  << " IMU=" << vImuForFrame.size() << "/" << vImuMeas.size();
             if (!vImuForFrame.empty()) {
                 cout << " range=[" << vImuForFrame.front().t << "," << vImuForFrame.back().t << "]";
+                // Show gap between last IMU and frame time
+                double imuFrameGap = frameTime - vImuForFrame.back().t;
+                if (imuFrameGap > 0.005) {  // More than 5ms
+                    cout << " GAP=" << setprecision(0) << imuFrameGap * 1000 << "ms";
+                }
             }
             cout << " trigger=" << (triggerTimestamp > 0 ? "yes" : "NO");
             if (!vImuForNext.empty()) {
