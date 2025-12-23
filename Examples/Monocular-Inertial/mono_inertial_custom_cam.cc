@@ -762,6 +762,14 @@ int main(int argc, char** argv) {
         if (!imuData.empty()) {
             firstImuTimestamp = imuData.front().timestamp_ms;
             cout << "First IMU timestamp: " << firstImuTimestamp << " ms" << endl;
+
+            // Print first IMU reading to verify values (gravity should be ~9.8 m/s² on one axis)
+            const auto& first = imuData.front();
+            cout << "First IMU reading (raw):" << endl;
+            cout << "  Accel: [" << first.accel_x << ", " << first.accel_y << ", " << first.accel_z << "] g" << endl;
+            cout << "  Gyro:  [" << first.gyro_x << ", " << first.gyro_y << ", " << first.gyro_z << "] deg/s" << endl;
+            cout << "  Accel (SI): [" << first.accel_x * 9.80665f << ", " << first.accel_y * 9.80665f
+                 << ", " << first.accel_z * 9.80665f << "] m/s²" << endl;
         }
         this_thread::sleep_for(chrono::milliseconds(10));
     }
@@ -839,17 +847,28 @@ int main(int argc, char** argv) {
                 continue;
             }
         }
- 
+
+        // Debug: Print timing info for first 20 frames
+        if (frameCount < 20) {
+            cout << "Frame " << frameCount << ": t=" << fixed << setprecision(3) << frameTime
+                 << " IMU=" << vImuMeas.size();
+            if (!vImuMeas.empty()) {
+                cout << " range=[" << vImuMeas.front().t << "," << vImuMeas.back().t << "]";
+            }
+            cout << " trigger=" << (triggerTimestamp > 0 ? "yes" : "NO");
+            cout << endl;
+        }
+
         // Resize if needed
         if (imageScale != 1.0f) {
             int newWidth = static_cast<int>(frame.cols * imageScale);
             int newHeight = static_cast<int>(frame.rows * imageScale);
             cv::resize(frame, frame, cv::Size(newWidth, newHeight));
         }
- 
+
         // Track
         SLAM.TrackMonocular(frame, frameTime, vImuMeas);
- 
+
         // Clear IMU measurements for next iteration
         vImuMeas.clear();
  
