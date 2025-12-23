@@ -283,7 +283,15 @@ public:
         triggerQueue_.pop();
         return ts;
     }
- 
+
+    // Clear all pending camera trigger timestamps
+    void clearTriggerQueue() {
+        lock_guard<mutex> lock(triggerMtx_);
+        while (!triggerQueue_.empty()) {
+            triggerQueue_.pop();
+        }
+    }
+
 private:
     void readLoop() {
         string lineBuffer;
@@ -790,8 +798,8 @@ int main(int argc, char** argv) {
     // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
     // and reset time base to avoid huge initial backlog
     cout << "Clearing IMU buffer accumulated during initialization..." << endl;
-    imuReader.getIMUData();  // Discard accumulated data
-    imuReader.getCameraTriggerTimestamp();  // Discard any pending camera trigger
+    imuReader.getIMUData();  // Discard accumulated IMU data
+    imuReader.clearTriggerQueue();  // Discard ALL pending camera triggers
 
     // Wait for fresh IMU data to establish new time base
     firstImuTimestamp = 0;
@@ -810,9 +818,12 @@ int main(int argc, char** argv) {
         cv::Mat frame;
         double ts;
         camera.getFrame(frame, ts);
-        imuReader.getCameraTriggerTimestamp();  // Discard trigger
         imuReader.getIMUData();  // Discard IMU
     }
+
+    // Final cleanup: clear any remaining old triggers that accumulated during init
+    imuReader.clearTriggerQueue();
+    imuReader.getIMUData();  // Discard any remaining IMU data
 
     cout << "VIO system ready. Press Ctrl+C to exit." << endl;
     cout << "========================================" << endl;
