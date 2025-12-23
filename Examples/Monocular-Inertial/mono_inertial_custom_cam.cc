@@ -788,6 +788,7 @@ int main(int argc, char** argv) {
     // and reset time base to avoid huge initial backlog
     cout << "Clearing IMU buffer accumulated during initialization..." << endl;
     imuReader.getIMUData();  // Discard accumulated data
+    imuReader.getCameraTriggerTimestamp();  // Discard any pending camera trigger
 
     // Wait for fresh IMU data to establish new time base
     firstImuTimestamp = 0;
@@ -798,6 +799,16 @@ int main(int argc, char** argv) {
             cout << "Reset time base to: " << firstImuTimestamp << " ms" << endl;
         }
         this_thread::sleep_for(chrono::milliseconds(5));
+    }
+
+    // Discard first few camera frames to ensure they have timestamps after our time base
+    cout << "Waiting for camera frames with valid timestamps..." << endl;
+    for (int i = 0; i < 5 && b_continue_session; i++) {
+        cv::Mat frame;
+        double ts;
+        camera.getFrame(frame, ts);
+        imuReader.getCameraTriggerTimestamp();  // Discard trigger
+        imuReader.getIMUData();  // Discard IMU
     }
 
     cout << "VIO system ready. Press Ctrl+C to exit." << endl;
@@ -851,11 +862,18 @@ int main(int argc, char** argv) {
         uint64_t triggerTimestamp = imuReader.getCameraTriggerTimestamp();
         double frameTime;
  
-        if (triggerTimestamp > 0) {
+        if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
             // Use Pico timestamp (relative to first IMU timestamp)
             frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
+        } else if (triggerTimestamp > 0 && triggerTimestamp < firstImuTimestamp) {
+            // Trigger timestamp is from before our time base - skip this frame
+            if (frameCount < 20) {
+                cout << "Skipping frame with old trigger timestamp: " << triggerTimestamp
+                     << " < " << firstImuTimestamp << endl;
+            }
+            continue;
         } else {
-            // Fall back to estimating from last IMU timestamp
+            // No trigger timestamp - fall back to estimating from last IMU timestamp
             if (!vImuMeas.empty()) {
                 frameTime = vImuMeas.back().t;
             } else {
