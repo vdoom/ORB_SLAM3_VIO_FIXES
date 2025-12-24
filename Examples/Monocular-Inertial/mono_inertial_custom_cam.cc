@@ -795,6 +795,23 @@ int main(int argc, char** argv) {
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, true);
     float imageScale = SLAM.GetImageScale();
 
+    // Read Camera.TimeOffset from config file (Kalibr convention: Time_camera = Time_imu + td)
+    // This compensates for delay between trigger signal and actual camera exposure
+    double cameraTimeOffset = 0.0;
+    {
+        cv::FileStorage fSettings(settingsPath, cv::FileStorage::READ);
+        if (fSettings.isOpened()) {
+            cv::FileNode node = fSettings["Camera.TimeOffset"];
+            if (!node.empty() && node.isReal()) {
+                cameraTimeOffset = static_cast<double>(node);
+                cout << "Camera.TimeOffset: " << cameraTimeOffset * 1000.0 << " ms" << endl;
+            } else {
+                cout << "Camera.TimeOffset not found in config, using 0" << endl;
+            }
+            fSettings.release();
+        }
+    }
+
     // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
     // and reset time base to avoid huge initial backlog
     cout << "Clearing IMU buffer accumulated during initialization..." << endl;
@@ -899,10 +916,12 @@ int main(int argc, char** argv) {
         }
 
         // Determine frame time
+        // Apply Camera.TimeOffset to compensate for trigger-to-exposure delay
+        // Kalibr convention: Time_camera = Time_imu + td
         double frameTime;
         if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            // Use Pico timestamp (relative to first IMU timestamp)
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0;
+            // Use Pico timestamp (relative to first IMU timestamp) + time offset
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + cameraTimeOffset;
         } else {
             // No trigger - fall back to last IMU timestamp
             if (!vImuMeas.empty()) {
