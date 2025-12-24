@@ -975,14 +975,14 @@ int main(int argc, char** argv) {
         frameCount++;
 
         // Print IMU diagnostics every 50 frames to verify motion detection
-        if (frameCount % 50 == 0) {
-            // Calculate min/max gyro from recent IMU data to see if motion is detected
+        if (frameCount % 50 == 0 && !vImuForFrame.empty()) {
+            // Calculate max gyro from recent IMU data to see if motion is detected
             float maxGyro = 0;
             float avgAccelMag = 0;
             for (const auto& pt : vImuForFrame) {
-                float gyroMag = sqrt(pt.w.x*pt.w.x + pt.w.y*pt.w.y + pt.w.z*pt.w.z);
+                float gyroMag = pt.w.norm();  // Eigen vector norm
                 if (gyroMag > maxGyro) maxGyro = gyroMag;
-                avgAccelMag += sqrt(pt.a.x*pt.a.x + pt.a.y*pt.a.y + pt.a.z*pt.a.z);
+                avgAccelMag += pt.a.norm();  // Eigen vector norm
             }
             avgAccelMag /= vImuForFrame.size();
             cout << "IMU check: maxGyro=" << fixed << setprecision(2) << maxGyro * 57.3 << " deg/s"
