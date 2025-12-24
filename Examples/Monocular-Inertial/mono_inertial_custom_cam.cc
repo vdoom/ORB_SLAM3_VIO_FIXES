@@ -971,9 +971,25 @@ int main(int argc, char** argv) {
 
         // Track with filtered IMU data
         SLAM.TrackMonocular(frame, frameTime, vImuForFrame);
- 
+
         frameCount++;
- 
+
+        // Print IMU diagnostics every 50 frames to verify motion detection
+        if (frameCount % 50 == 0) {
+            // Calculate min/max gyro from recent IMU data to see if motion is detected
+            float maxGyro = 0;
+            float avgAccelMag = 0;
+            for (const auto& pt : vImuForFrame) {
+                float gyroMag = sqrt(pt.w.x*pt.w.x + pt.w.y*pt.w.y + pt.w.z*pt.w.z);
+                if (gyroMag > maxGyro) maxGyro = gyroMag;
+                avgAccelMag += sqrt(pt.a.x*pt.a.x + pt.a.y*pt.a.y + pt.a.z*pt.a.z);
+            }
+            avgAccelMag /= vImuForFrame.size();
+            cout << "IMU check: maxGyro=" << fixed << setprecision(2) << maxGyro * 57.3 << " deg/s"
+                 << " | accelMag=" << setprecision(2) << avgAccelMag << " m/s²"
+                 << " (expect ~9.8 stationary, varies with motion)" << endl;
+        }
+
         // Print statistics every 100 frames
         if (frameCount % 100 == 0) {
             auto now = chrono::steady_clock::now();
