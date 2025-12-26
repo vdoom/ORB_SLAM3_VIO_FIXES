@@ -3037,11 +3037,10 @@ bool Tracking::TrackLocalMap()
     if (mSensor == System::IMU_MONOCULAR)
     {
         // During IMU initialization, tracking is harder because we can't use IMU to predict pose.
-        // Reduced threshold from 50 to 20 to make initialization more robust.
-        // The system needs to survive long enough (15+ seconds) for IMU to fully initialize.
-        // After IMU init, 15 matches is enough since IMU helps with pose prediction.
-        int minMatchesPreInit = 20;  // Was 50, then 30, now 20 for more robust initialization
-        int minMatchesPostInit = 15;
+        // After initial IMU init but before VIBA2, system is still fragile.
+        // Reduced thresholds to help system survive until full IMU init (VIBA2).
+        int minMatchesPreInit = 20;   // Was 50 - before any IMU init
+        int minMatchesPostInit = 10;  // Was 15 - after initial IMU init, still need VIBA2
 
         if((mnMatchesInliers<minMatchesPostInit && mpAtlas->isImuInitialized())||(mnMatchesInliers<minMatchesPreInit && !mpAtlas->isImuInitialized()))
         {
