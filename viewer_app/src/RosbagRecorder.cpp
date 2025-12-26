@@ -1,5 +1,6 @@
 #include "RosbagRecorder.h"
 #include "RosBagWriter.h"
+#include "CameraController.h"
 
 #include <QDebug>
 #include <QFileInfo>
@@ -107,6 +108,15 @@ void RosbagRecorder::addCameraFrame(const QImage& frame)
         grayFrame = frame.copy();  // Make a copy to ensure data ownership
     } else {
         grayFrame = frame.convertToFormat(QImage::Format_Grayscale8);
+    }
+
+    // Scale to 640x400 if frame is larger (for lower resolution recording)
+    const int targetWidth = 640;
+    const int targetHeight = 400;
+    if (grayFrame.width() > targetWidth || grayFrame.height() > targetHeight) {
+        grayFrame = grayFrame.scaled(targetWidth, targetHeight,
+                                      Qt::IgnoreAspectRatio,
+                                      Qt::SmoothTransformation);
     }
 
     // Validate the converted image
@@ -229,7 +239,28 @@ void RosbagRecorder::setCameraTriggerTimestamp(uint64_t timestamp_ms)
         locker.relock();
     }
 
-    pendingCameraTriggerMs_ = timestamp_ms;
+    // Apply exposure time correction for fixed (manual) exposure mode
+    // For global shutter cameras, the effective timestamp is at the middle of exposure
+    uint64_t corrected_timestamp_ms = timestamp_ms;
+
+    if (cameraController_ && !cameraController_->autoExposure()) {
+        // Auto-exposure is disabled (fixed/manual mode)
+        // Get current exposure time in microseconds
+        int exposure_us = cameraController_->exposureTime();
+
+        // Add half of exposure time to get middle of exposure
+        // Convert microseconds to milliseconds: exposure_us / 2 / 1000
+        uint64_t half_exposure_ms = static_cast<uint64_t>(exposure_us / 2000);
+        corrected_timestamp_ms = timestamp_ms + half_exposure_ms;
+
+        qDebug() << "Camera trigger timestamp correction applied:"
+                 << "trigger=" << timestamp_ms << "ms"
+                 << "exposure=" << exposure_us << "us"
+                 << "corrected=" << corrected_timestamp_ms << "ms"
+                 << "(+" << half_exposure_ms << "ms)";
+    }
+
+    pendingCameraTriggerMs_ = corrected_timestamp_ms;
     hasPendingCameraTrigger_ = true;
 }
 

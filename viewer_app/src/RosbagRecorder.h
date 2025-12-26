@@ -34,6 +34,9 @@
 
 #include "SerialIMUReader.h"
 
+// Forward declaration
+class CameraController;
+
 namespace rosbag {
     class RosBagWriter;
 }
@@ -60,6 +63,9 @@ public:
     void setImuTopic(const QString& topic) { imuTopic_ = topic; }
     QString cameraTopic() const { return cameraTopic_; }
     QString imuTopic() const { return imuTopic_; }
+
+    // Set camera controller (for exposure time correction)
+    void setCameraController(CameraController* controller) { cameraController_ = controller; }
 
 public slots:
     // Start recording to the specified file
@@ -126,6 +132,9 @@ private:
     // Pending camera trigger timestamp from Pico
     uint64_t pendingCameraTriggerMs_ = 0;
     bool hasPendingCameraTrigger_ = false;
+
+    // Camera controller (for exposure time correction)
+    CameraController* cameraController_ = nullptr;
 
     // Thread safety
     mutable QMutex mutex_;

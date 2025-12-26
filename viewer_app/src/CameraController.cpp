@@ -265,8 +265,8 @@ bool CameraController::Impl::initialize(int cameraIndex)
     
     // Configure stream for OV9281 (monochrome global shutter camera)
     StreamConfiguration &streamConfig = config_->at(0);
-    // OV9281 native resolution is 1280x800
-    streamConfig.size = Size(1280, 800);
+    // Camera resolution (640x400 for lower CPU usage)
+    streamConfig.size = Size(640, 400);
     // Try to request R8 (8-bit grayscale) format for mono sensor
     // This avoids expensive XRGB8888 -> Grayscale conversion
     streamConfig.pixelFormat = formats::R8;

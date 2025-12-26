@@ -386,6 +386,9 @@ void MainWindow::setupToolbar()
     // Setup rosbag recorder
     rosbagRecorder_ = std::make_unique<RosbagRecorder>(this);
 
+    // Connect camera controller to rosbag recorder for exposure time correction
+    rosbagRecorder_->setCameraController(cameraController_.get());
+
     connect(rosbagRecorder_.get(), &RosbagRecorder::recordingStarted,
             this, &MainWindow::onRosbagRecordingStarted,
             Qt::QueuedConnection);
