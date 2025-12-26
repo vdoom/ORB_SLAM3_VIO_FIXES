@@ -131,13 +131,18 @@ void LocalMapping::Run()
                         float dist = (mpCurrentKeyFrame->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->GetCameraCenter()).norm() +
                                 (mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter()).norm();
 
-                        if(dist>0.05)
+                        // Accumulate initialization time when there's sufficient motion
+                        // Reduced threshold from 0.05 to 0.03 to accept slower motion
+                        if(dist>0.03)
                             mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
                         if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
                         {
-                            if((mTinit<10.f) && (dist<0.02))
+                            // Only reset if truly static (very little motion) for extended time
+                            // Reduced distance threshold from 0.02 to 0.01 to be more lenient
+                            // In monocular SLAM, scale is arbitrary so small distances might still be real motion
+                            if((mTinit<10.f) && (dist<0.01))
                             {
-                                cout << "Not enough motion for initializing. Reseting..." << endl;
+                                cout << "Not enough motion for initializing (dist=" << dist << "m). Reseting..." << endl;
                                 unique_lock<mutex> lock(mMutexReset);
                                 mbResetRequestedActiveMap = true;
                                 mpMapToReset = mpCurrentKeyFrame->GetMap();
