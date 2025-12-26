@@ -131,18 +131,20 @@ void LocalMapping::Run()
                         float dist = (mpCurrentKeyFrame->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->GetCameraCenter()).norm() +
                                 (mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter()).norm();
 
-                        // Accumulate initialization time when there's sufficient motion
-                        // Reduced threshold from 0.05 to 0.03 to accept slower motion
-                        if(dist>0.03)
-                            mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
-                        if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
+                        // Always accumulate initialization time regardless of distance
+                        // In monocular SLAM, scale is arbitrary so distance thresholds are unreliable
+                        // Time is what matters for IMU initialization
+                        mTinit += mpCurrentKeyFrame->mTimeStamp - mpCurrentKeyFrame->mPrevKF->mTimeStamp;
+
+                        // Only check for "not enough motion" AFTER VIBA1 completes
+                        // Before VIBA1, scale is unreliable so distance checks are meaningless
+                        if(mpCurrentKeyFrame->GetMap()->GetIniertialBA1() && !mpCurrentKeyFrame->GetMap()->GetIniertialBA2())
                         {
-                            // Only reset if truly static (very little motion) for extended time
-                            // Reduced distance threshold from 0.02 to 0.01 to be more lenient
-                            // In monocular SLAM, scale is arbitrary so small distances might still be real motion
-                            if((mTinit<10.f) && (dist<0.01))
+                            // After VIBA1, scale is more reliable but still use very lenient threshold
+                            // Only reset if truly static for extended time
+                            if((mTinit<10.f) && (dist<0.005))
                             {
-                                cout << "Not enough motion for initializing (dist=" << dist << "m). Reseting..." << endl;
+                                cout << "Not enough motion for initializing (dist=" << dist << "m, mTinit=" << mTinit << "s). Reseting..." << endl;
                                 unique_lock<mutex> lock(mMutexReset);
                                 mbResetRequestedActiveMap = true;
                                 mpMapToReset = mpCurrentKeyFrame->GetMap();
@@ -1273,9 +1275,12 @@ void LocalMapping::InitializeIMU(float priorG, float priorA, bool bFIBA)
 
     std::chrono::steady_clock::time_point t1 = std::chrono::steady_clock::now();
 
-    if (mScale<1e-1)
+    // Lowered minimum scale from 0.1 to 0.01 for monocular-inertial
+    // In monocular SLAM, initial visual scale can be very wrong (e.g., 10x too large)
+    // which requires a small scale factor to correct
+    if (mScale<1e-2)
     {
-        cout << "scale too small" << endl;
+        cout << "scale too small: " << mScale << endl;
         bInitializing=false;
         return;
     }

@@ -3037,16 +3037,17 @@ bool Tracking::TrackLocalMap()
     if (mSensor == System::IMU_MONOCULAR)
     {
         // During IMU initialization, tracking is harder because we can't use IMU to predict pose.
-        // Reduced threshold from 50 to 30 to make initialization more robust.
+        // Reduced threshold from 50 to 20 to make initialization more robust.
+        // The system needs to survive long enough (15+ seconds) for IMU to fully initialize.
         // After IMU init, 15 matches is enough since IMU helps with pose prediction.
-        int minMatchesPreInit = 30;  // Was 50, reduced for more robust initialization
+        int minMatchesPreInit = 20;  // Was 50, then 30, now 20 for more robust initialization
         int minMatchesPostInit = 15;
 
         if((mnMatchesInliers<minMatchesPostInit && mpAtlas->isImuInitialized())||(mnMatchesInliers<minMatchesPreInit && !mpAtlas->isImuInitialized()))
         {
-            if (!mpAtlas->isImuInitialized()) {
-                cout << "TrackLocalMap failed: " << mnMatchesInliers << " inliers < " << minMatchesPreInit << " required (pre-IMU-init)" << endl;
-            }
+            cout << "TrackLocalMap failed: " << mnMatchesInliers << " inliers < "
+                 << (mpAtlas->isImuInitialized() ? minMatchesPostInit : minMatchesPreInit)
+                 << " required (" << (mpAtlas->isImuInitialized() ? "post" : "pre") << "-IMU-init)" << endl;
             return false;
         }
         else
