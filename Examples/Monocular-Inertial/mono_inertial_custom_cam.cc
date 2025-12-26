@@ -604,7 +604,8 @@ public:
     int width() const { return frameWidth_; }
     int height() const { return frameHeight_; }
     bool isRunning() const { return running_; }
- 
+    int exposureTimeUs() const { return settings_.exposureTimeUs; }
+
 private:
     void requestComplete(Request* request) {
         if (!running_) return;
@@ -795,22 +796,12 @@ int main(int argc, char** argv) {
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, true);
     float imageScale = SLAM.GetImageScale();
 
-    // Read Camera.TimeOffset from config file (Kalibr convention: Time_camera = Time_imu + td)
-    // This compensates for delay between trigger signal and actual camera exposure
-    double cameraTimeOffset = 0.0;
-    {
-        cv::FileStorage fSettings(settingsPath, cv::FileStorage::READ);
-        if (fSettings.isOpened()) {
-            cv::FileNode node = fSettings["Camera.TimeOffset"];
-            if (!node.empty() && node.isReal()) {
-                cameraTimeOffset = static_cast<double>(node);
-                cout << "Camera.TimeOffset: " << cameraTimeOffset * 1000.0 << " ms" << endl;
-            } else {
-                cout << "Camera.TimeOffset not found in config, using 0" << endl;
-            }
-            fSettings.release();
-        }
-    }
+    // Calculate exposure time offset: half of exposure time in seconds
+    // The trigger timestamp marks the start of exposure, but the actual image
+    // corresponds to the middle of the exposure window
+    double halfExposureTimeSec = camera.exposureTimeUs() / 2.0 / 1e6;
+    cout << "Exposure time: " << camera.exposureTimeUs() << " us" << endl;
+    cout << "Half exposure offset: " << halfExposureTimeSec * 1000.0 << " ms" << endl;
 
     // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
     // and reset time base to avoid huge initial backlog
@@ -916,12 +907,11 @@ int main(int argc, char** argv) {
         }
 
         // Determine frame time
-        // Apply Camera.TimeOffset to compensate for trigger-to-exposure delay
-        // Kalibr convention: Time_camera = Time_imu + td
+        // Add half exposure time to trigger timestamp to get the middle of exposure
         double frameTime;
         if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            // Use Pico timestamp (relative to first IMU timestamp) + time offset
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + cameraTimeOffset;
+            // Use Pico timestamp (relative to first IMU timestamp) + half exposure
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + halfExposureTimeSec;
         } else {
             // No trigger - fall back to last IMU timestamp
             if (!vImuMeas.empty()) {
