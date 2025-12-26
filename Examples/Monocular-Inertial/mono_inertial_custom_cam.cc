@@ -796,12 +796,35 @@ int main(int argc, char** argv) {
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, true);
     float imageScale = SLAM.GetImageScale();
 
-    // Calculate exposure time offset: half of exposure time in seconds
-    // The trigger timestamp marks the start of exposure, but the actual image
-    // corresponds to the middle of the exposure window
+    // Calculate camera-IMU time offset
+    // Two components:
+    // 1. Camera.TimeOffset from Kalibr: represents full delay from trigger to image center
+    //    (Kalibr convention: Time_camera = Time_imu + td)
+    // 2. Half exposure time: if Kalibr wasn't used, this approximates the delay
+    //
+    // Kalibr's timeshift already includes the half-exposure effect, so we use it directly
+    // if available. If not, we fall back to just half-exposure as an approximation.
+    double cameraTimeOffset = 0.0;
+    {
+        cv::FileStorage fSettings(settingsPath, cv::FileStorage::READ);
+        if (fSettings.isOpened()) {
+            cv::FileNode node = fSettings["Camera.TimeOffset"];
+            if (!node.empty() && node.isReal()) {
+                cameraTimeOffset = static_cast<double>(node);
+                cout << "Camera.TimeOffset from Kalibr: " << cameraTimeOffset * 1000.0 << " ms" << endl;
+            }
+            fSettings.release();
+        }
+    }
+
+    // Calculate half exposure time
     double halfExposureTimeSec = camera.exposureTimeUs() / 2.0 / 1e6;
     cout << "Exposure time: " << camera.exposureTimeUs() << " us" << endl;
-    cout << "Half exposure offset: " << halfExposureTimeSec * 1000.0 << " ms" << endl;
+    cout << "Half exposure time: " << halfExposureTimeSec * 1000.0 << " ms" << endl;
+
+    // Use Kalibr offset if available, otherwise fall back to half exposure
+    double frameTimeOffset = (cameraTimeOffset != 0.0) ? cameraTimeOffset : halfExposureTimeSec;
+    cout << "Using frame time offset: " << frameTimeOffset * 1000.0 << " ms" << endl;
 
     // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
     // and reset time base to avoid huge initial backlog
@@ -907,11 +930,11 @@ int main(int argc, char** argv) {
         }
 
         // Determine frame time
-        // Add half exposure time to trigger timestamp to get the middle of exposure
+        // Apply time offset to align trigger timestamp with actual image capture time
         double frameTime;
         if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            // Use Pico timestamp (relative to first IMU timestamp) + half exposure
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + halfExposureTimeSec;
+            // Use Pico timestamp (relative to first IMU timestamp) + time offset
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + frameTimeOffset;
         } else {
             // No trigger - fall back to last IMU timestamp
             if (!vImuMeas.empty()) {
@@ -1004,9 +1027,24 @@ int main(int argc, char** argv) {
             auto now = chrono::steady_clock::now();
             double elapsed = chrono::duration<double>(now - startTime).count();
             double fps = frameCount / elapsed;
+
+            // Get tracking state
+            int trackingState = SLAM.GetTrackingState();
+            const char* stateStr = "UNKNOWN";
+            switch (trackingState) {
+                case -1: stateStr = "NOT_READY"; break;
+                case 0: stateStr = "NO_IMAGES"; break;
+                case 1: stateStr = "INIT"; break;
+                case 2: stateStr = "OK"; break;
+                case 3: stateStr = "RECENTLY_LOST"; break;
+                case 4: stateStr = "LOST"; break;
+                case 5: stateStr = "OK_KLT"; break;
+            }
+
             cout << "Frames: " << frameCount
                  << " | IMU: " << imuCount
                  << " | FPS: " << fixed << setprecision(1) << fps
+                 << " | State: " << stateStr
                  << " | Time: " << fixed << setprecision(1) << elapsed << "s"
                  << endl;
         }

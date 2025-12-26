@@ -69,7 +69,8 @@ IMU.InsertKFsWhenLost: 0
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 800
+# Increased from 800 to 1200 for more robust tracking
+ORBextractor.nFeatures: 1200
 
 # ORB Extractor: Scale factor between levels in the scale pyramid
 ORBextractor.scaleFactor: 1.2
@@ -78,8 +79,9 @@ ORBextractor.scaleFactor: 1.2
 ORBextractor.nLevels: 8
 
 # ORB Extractor: Fast threshold
-ORBextractor.iniThFAST: 20
-ORBextractor.minThFAST: 7
+# Lowered thresholds slightly for better feature detection in low-texture areas
+ORBextractor.iniThFAST: 15
+ORBextractor.minThFAST: 5
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters
