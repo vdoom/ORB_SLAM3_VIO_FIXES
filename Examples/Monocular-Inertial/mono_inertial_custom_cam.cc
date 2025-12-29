@@ -40,6 +40,8 @@
 #include <termios.h>
 #include <unistd.h>
 #include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <linux/i2c-dev.h>
 #include <cstring>
 #include <errno.h>
  
@@ -56,11 +58,95 @@ void exit_loop_handler(int s) {
     cout << "\nFinishing session..." << endl;
     b_continue_session = false;
 }
- 
+
+// ============================================================================
+// OV9281 I2C Trigger Mode Control
+// ============================================================================
+
+static int ov9281_write_reg(int fd, uint16_t reg, uint8_t val) {
+    uint8_t buf[3] = {static_cast<uint8_t>((reg >> 8) & 0xFF),
+                      static_cast<uint8_t>(reg & 0xFF),
+                      val};
+    if (write(fd, buf, 3) != 3) {
+        cerr << "I2C write failed for reg 0x" << hex << reg << ": " << strerror(errno) << dec << endl;
+        return -1;
+    }
+    return 0;
+}
+
+int ov9281_set_trigger_mode(int bus, bool enable) {
+    char dev_path[20];
+    snprintf(dev_path, sizeof(dev_path), "/dev/i2c-%d", bus);
+
+    int fd = open(dev_path, O_RDWR);
+    if (fd < 0) {
+        cerr << "Failed to open I2C bus " << dev_path << ": " << strerror(errno) << endl;
+        return -1;
+    }
+
+    if (ioctl(fd, I2C_SLAVE_FORCE, 0x60) < 0) {
+        cerr << "Failed to set I2C slave address 0x60: " << strerror(errno) << endl;
+        close(fd);
+        return -1;
+    }
+
+    int ret = 0;
+    if (enable) {
+        // Full initialization sequence for trigger mode
+        ret |= ov9281_write_reg(fd, 0x3006, 0x0C);  // Timing control
+        ret |= ov9281_write_reg(fd, 0x3027, 0x00);
+        ret |= ov9281_write_reg(fd, 0x4F00, 0x01);  // Enable trigger
+        ret |= ov9281_write_reg(fd, 0x3030, 0x04);
+        ret |= ov9281_write_reg(fd, 0x303F, 0x01);
+        ret |= ov9281_write_reg(fd, 0x302C, 0x00);
+        ret |= ov9281_write_reg(fd, 0x302F, 0x7F);
+        ret |= ov9281_write_reg(fd, 0x3023, 0x00);
+        ret |= ov9281_write_reg(fd, 0x0100, 0x00);  // Standby (wait for trigger)
+    } else {
+        // Simplified sequence for free-run mode
+        ret |= ov9281_write_reg(fd, 0x3006, 0x04);  // Normal timing
+        ret |= ov9281_write_reg(fd, 0x4F00, 0x00);  // Disable trigger
+        ret |= ov9281_write_reg(fd, 0x0100, 0x01);  // Start streaming
+    }
+
+    close(fd);
+    return ret;
+}
+
+// Auto-detect I2C bus for OV9281 (typically bus 4 or 10 on RPi5)
+int ov9281_find_i2c_bus() {
+    // Common I2C buses for camera on Raspberry Pi 5
+    int buses[] = {4, 10, 1, 0};
+
+    for (int bus : buses) {
+        char dev_path[20];
+        snprintf(dev_path, sizeof(dev_path), "/dev/i2c-%d", bus);
+
+        int fd = open(dev_path, O_RDWR);
+        if (fd < 0) continue;
+
+        if (ioctl(fd, I2C_SLAVE_FORCE, 0x60) >= 0) {
+            // Try to read a register to verify device is present
+            uint8_t reg[2] = {0x30, 0x00};  // Chip ID register
+            if (write(fd, reg, 2) == 2) {
+                uint8_t val;
+                if (read(fd, &val, 1) == 1) {
+                    close(fd);
+                    cout << "Found OV9281 on I2C bus " << bus << endl;
+                    return bus;
+                }
+            }
+        }
+        close(fd);
+    }
+
+    return -1;  // Not found
+}
+
 // ============================================================================
 // IMU Data structures
 // ============================================================================
- 
+
 struct IMUData {
     uint64_t timestamp_ms = 0;
     uint32_t interrupt_count = 0;
@@ -765,7 +851,21 @@ int main(int argc, char** argv) {
         cerr << "Failed to start camera" << endl;
         return 1;
     }
- 
+
+    // Enable hardware trigger mode on OV9281 via I2C
+    // This must be done AFTER camera.start() so the driver is initialized
+    int i2c_bus = ov9281_find_i2c_bus();
+    if (i2c_bus >= 0) {
+        if (ov9281_set_trigger_mode(i2c_bus, true) == 0) {
+            cout << "OV9281 trigger mode ENABLED on I2C bus " << i2c_bus << endl;
+        } else {
+            cerr << "Warning: Failed to enable trigger mode, camera may not sync properly" << endl;
+        }
+    } else {
+        cerr << "Warning: Could not find OV9281 on I2C, trigger mode not enabled" << endl;
+        cerr << "  Camera may run in free-run mode without hardware sync" << endl;
+    }
+
     // Wait for first IMU data to establish time base
     cout << "Waiting for IMU data..." << endl;
     uint64_t firstImuTimestamp = 0;
@@ -1052,7 +1152,14 @@ int main(int argc, char** argv) {
  
     // Cleanup
     cout << endl << "Shutting down..." << endl;
- 
+
+    // Disable trigger mode before stopping camera
+    if (i2c_bus >= 0) {
+        if (ov9281_set_trigger_mode(i2c_bus, false) == 0) {
+            cout << "OV9281 trigger mode disabled" << endl;
+        }
+    }
+
     camera.stop();
     imuReader.close();
  
