@@ -113,35 +113,8 @@ int ov9281_set_trigger_mode(int bus, bool enable) {
     return ret;
 }
 
-// Auto-detect I2C bus for OV9281 (typically bus 4 or 10 on RPi5)
-int ov9281_find_i2c_bus() {
-    // Common I2C buses for camera on Raspberry Pi 5
-    int buses[] = {4, 10, 1, 0};
-
-    for (int bus : buses) {
-        char dev_path[20];
-        snprintf(dev_path, sizeof(dev_path), "/dev/i2c-%d", bus);
-
-        int fd = open(dev_path, O_RDWR);
-        if (fd < 0) continue;
-
-        if (ioctl(fd, I2C_SLAVE_FORCE, 0x60) >= 0) {
-            // Try to read a register to verify device is present
-            uint8_t reg[2] = {0x30, 0x00};  // Chip ID register
-            if (write(fd, reg, 2) == 2) {
-                uint8_t val;
-                if (read(fd, &val, 1) == 1) {
-                    close(fd);
-                    cout << "Found OV9281 on I2C bus " << bus << endl;
-                    return bus;
-                }
-            }
-        }
-        close(fd);
-    }
-
-    return -1;  // Not found
-}
+// I2C bus for OV9281 camera on Raspberry Pi 5
+constexpr int OV9281_I2C_BUS = 10;
 
 // ============================================================================
 // IMU Data structures
@@ -854,16 +827,11 @@ int main(int argc, char** argv) {
 
     // Enable hardware trigger mode on OV9281 via I2C
     // This must be done AFTER camera.start() so the driver is initialized
-    int i2c_bus = ov9281_find_i2c_bus();
-    if (i2c_bus >= 0) {
-        if (ov9281_set_trigger_mode(i2c_bus, true) == 0) {
-            cout << "OV9281 trigger mode ENABLED on I2C bus " << i2c_bus << endl;
-        } else {
-            cerr << "Warning: Failed to enable trigger mode, camera may not sync properly" << endl;
-        }
+    if (ov9281_set_trigger_mode(OV9281_I2C_BUS, true) == 0) {
+        cout << "OV9281 trigger mode ENABLED on I2C bus " << OV9281_I2C_BUS << endl;
     } else {
-        cerr << "Warning: Could not find OV9281 on I2C, trigger mode not enabled" << endl;
-        cerr << "  Camera may run in free-run mode without hardware sync" << endl;
+        cerr << "Warning: Failed to enable trigger mode on I2C bus " << OV9281_I2C_BUS << endl;
+        cerr << "  Camera may not sync properly with hardware trigger" << endl;
     }
 
     // Wait for first IMU data to establish time base
@@ -1154,10 +1122,8 @@ int main(int argc, char** argv) {
     cout << endl << "Shutting down..." << endl;
 
     // Disable trigger mode before stopping camera
-    if (i2c_bus >= 0) {
-        if (ov9281_set_trigger_mode(i2c_bus, false) == 0) {
-            cout << "OV9281 trigger mode disabled" << endl;
-        }
+    if (ov9281_set_trigger_mode(OV9281_I2C_BUS, false) == 0) {
+        cout << "OV9281 trigger mode disabled" << endl;
     }
 
     camera.stop();
