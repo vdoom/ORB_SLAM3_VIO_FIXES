@@ -59,43 +59,13 @@ if(PkgConfig_FOUND)
     pkg_check_modules(LIBCAMERA libcamera)
     if(LIBCAMERA_FOUND)
         message(STATUS "libcamera found: ${LIBCAMERA_VERSION}")
+        # Build Pear VIO Camera Library as third-party
+        add_subdirectory(Thirdparty/pear)
     else()
         message(STATUS "libcamera not found - custom camera examples will not be built")
     endif()
 else()
     message(STATUS "PkgConfig not found - custom camera examples will not be built")
-endif()
-
-# Pear VIO Camera Library (requires libcamera)
-if(LIBCAMERA_FOUND)
-    set(PEAR_SOURCES
-        src/pear/camera.cpp
-        src/pear/imu.cpp
-        src/pear/pear_vio_camera.cpp
-    )
-    set(PEAR_HEADERS
-        include/pear/pear.h
-        include/pear/types.h
-        include/pear/config.h
-        include/pear/camera.h
-        include/pear/imu.h
-        include/pear/pear_vio_camera.h
-    )
-    add_library(pear SHARED ${PEAR_SOURCES} ${PEAR_HEADERS})
-    target_compile_features(pear PRIVATE cxx_std_17)
-    target_include_directories(pear PUBLIC
-        ${PROJECT_SOURCE_DIR}/include
-        ${LIBCAMERA_INCLUDE_DIRS}
-    )
-    target_compile_options(pear PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
-    target_link_libraries(pear
-        ${OpenCV_LIBS}
-        ${LIBCAMERA_LIBRARIES}
-    )
-    set_target_properties(pear PROPERTIES
-        LIBRARY_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/lib
-    )
-    message(STATUS "Pear VIO Camera library enabled")
 endif()
  
 # Include FetchContent for downloading dependencies
@@ -114,6 +84,7 @@ ${PROJECT_SOURCE_DIR}
 ${PROJECT_SOURCE_DIR}/include
 ${PROJECT_SOURCE_DIR}/include/CameraModels
 ${PROJECT_SOURCE_DIR}/Thirdparty/Sophus
+${PROJECT_SOURCE_DIR}/Thirdparty/pear/include
 ${EIGEN3_INCLUDE_DIR}
 ${Pangolin_INCLUDE_DIRS}
 )
