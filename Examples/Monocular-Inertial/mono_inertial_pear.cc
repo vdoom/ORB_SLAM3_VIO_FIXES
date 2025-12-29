@@ -79,6 +79,13 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Enable hardware trigger mode on OV9281 via I2C
+    // This must be done AFTER camera.start() so the driver is initialized
+    if (!camera.setTriggerMode(true)) {
+        cerr << "Warning: Failed to enable trigger mode" << endl;
+        cerr << "  Camera may not sync properly with hardware trigger" << endl;
+    }
+
     // Wait for first IMU data to establish time base
     uint64_t firstImuTimestamp = camera.waitForIMU();
     if (firstImuTimestamp == 0) {
@@ -304,6 +311,9 @@ int main(int argc, char** argv) {
 
     // Cleanup
     cout << endl << "Shutting down..." << endl;
+
+    // Disable trigger mode before stopping camera
+    camera.setTriggerMode(false);
 
     camera.stop();
     SLAM.Shutdown();

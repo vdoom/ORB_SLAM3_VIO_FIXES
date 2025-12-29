@@ -14,6 +14,12 @@
 #include <opencv2/imgproc/imgproc.hpp>
 
 #include <sys/mman.h>
+#include <sys/ioctl.h>
+#include <linux/i2c-dev.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <cstring>
+#include <cerrno>
 
 using namespace std;
 using namespace libcamera;
@@ -347,6 +353,86 @@ void CameraController::requestComplete(Request* request) {
     // Requeue request
     request->reuse(Request::ReuseBuffers);
     impl_->camera->queueRequest(request);
+}
+
+// ============================================================================
+// OV9281 I2C Trigger Mode Control
+// ============================================================================
+
+namespace {
+
+// Write a single register to OV9281 via I2C
+int ov9281WriteReg(int fd, uint16_t reg, uint8_t val) {
+    uint8_t buf[3] = {
+        static_cast<uint8_t>((reg >> 8) & 0xFF),
+        static_cast<uint8_t>(reg & 0xFF),
+        val
+    };
+    if (write(fd, buf, 3) != 3) {
+        cerr << "I2C write failed for reg 0x" << hex << reg
+             << ": " << strerror(errno) << dec << endl;
+        return -1;
+    }
+    return 0;
+}
+
+}  // anonymous namespace
+
+bool CameraController::setTriggerMode(bool enable) {
+    char devPath[32];
+    snprintf(devPath, sizeof(devPath), "/dev/i2c-%d", config_.i2cBus);
+
+    int fd = open(devPath, O_RDWR);
+    if (fd < 0) {
+        cerr << "Failed to open I2C bus " << devPath << ": " << strerror(errno) << endl;
+        return false;
+    }
+
+    if (ioctl(fd, I2C_SLAVE_FORCE, config_.i2cAddress) < 0) {
+        cerr << "Failed to set I2C slave address 0x" << hex << config_.i2cAddress
+             << ": " << strerror(errno) << dec << endl;
+        close(fd);
+        return false;
+    }
+
+    int ret = 0;
+    if (enable) {
+        // Full initialization sequence for trigger mode
+        // These registers configure OV9281 to wait for external trigger
+        ret |= ov9281WriteReg(fd, 0x3006, 0x0C);  // Timing control
+        ret |= ov9281WriteReg(fd, 0x3027, 0x00);
+        ret |= ov9281WriteReg(fd, 0x4F00, 0x01);  // Enable trigger
+        ret |= ov9281WriteReg(fd, 0x3030, 0x04);
+        ret |= ov9281WriteReg(fd, 0x303F, 0x01);
+        ret |= ov9281WriteReg(fd, 0x302C, 0x00);
+        ret |= ov9281WriteReg(fd, 0x302F, 0x7F);
+        ret |= ov9281WriteReg(fd, 0x3023, 0x00);
+        ret |= ov9281WriteReg(fd, 0x0100, 0x00);  // Standby (wait for trigger)
+
+        if (ret == 0) {
+            cout << "OV9281 trigger mode ENABLED on I2C bus " << config_.i2cBus << endl;
+            triggerModeEnabled_ = true;
+        }
+    } else {
+        // Simplified sequence for free-run mode
+        ret |= ov9281WriteReg(fd, 0x3006, 0x04);  // Normal timing
+        ret |= ov9281WriteReg(fd, 0x4F00, 0x00);  // Disable trigger
+        ret |= ov9281WriteReg(fd, 0x0100, 0x01);  // Start streaming
+
+        if (ret == 0) {
+            cout << "OV9281 trigger mode disabled" << endl;
+            triggerModeEnabled_ = false;
+        }
+    }
+
+    close(fd);
+
+    if (ret != 0) {
+        cerr << "Warning: Some I2C register writes failed" << endl;
+        return false;
+    }
+
+    return true;
 }
 
 }  // namespace pear

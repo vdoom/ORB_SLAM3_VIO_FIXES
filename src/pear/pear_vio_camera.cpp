@@ -194,4 +194,12 @@ int PearVIOCamera::exposureTimeUs() const {
     return camera_->exposureTimeUs();
 }
 
+bool PearVIOCamera::setTriggerMode(bool enable) {
+    return camera_->setTriggerMode(enable);
+}
+
+bool PearVIOCamera::isTriggerModeEnabled() const {
+    return camera_->isTriggerModeEnabled();
+}
+
 }  // namespace pear

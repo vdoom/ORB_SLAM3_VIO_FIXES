@@ -35,6 +35,10 @@ struct CameraConfig {
     // Trigger mode (external trigger from Pico)
     bool triggerMode = false;
 
+    // I2C configuration for OV9281 trigger mode control
+    int i2cBus = 10;              // I2C bus number (10 for RPi5 CAM1)
+    int i2cAddress = 0x60;        // OV9281 I2C address
+
     /**
      * Load settings from INI file (compatible with viewer_app format).
      * @param path Path to INI file
@@ -95,6 +99,10 @@ struct CameraConfig {
                     width = std::stoi(value);
                 } else if (key == "height") {
                     height = std::stoi(value);
+                } else if (key == "i2c_bus") {
+                    i2cBus = std::stoi(value);
+                } else if (key == "i2c_address") {
+                    i2cAddress = std::stoi(value, nullptr, 0);  // supports hex
                 }
             }
         }
@@ -197,6 +205,10 @@ struct PearConfig {
                     camera.height = std::stoi(value);
                 } else if (key == "camera_index") {
                     camera.cameraIndex = std::stoi(value);
+                } else if (key == "i2c_bus") {
+                    camera.i2cBus = std::stoi(value);
+                } else if (key == "i2c_address") {
+                    camera.i2cAddress = std::stoi(value, nullptr, 0);
                 }
             } else if (currentSection == "imu") {
                 if (key == "serial_port") {

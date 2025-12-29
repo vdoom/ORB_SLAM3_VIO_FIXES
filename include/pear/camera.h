@@ -115,6 +115,22 @@ public:
      */
     const CameraConfig& config() const { return config_; }
 
+    /**
+     * Enable or disable hardware trigger mode on OV9281 via I2C.
+     *
+     * This configures the OV9281 sensor to wait for external trigger pulses
+     * instead of free-running. Must be called AFTER start().
+     *
+     * @param enable true to enable trigger mode, false for free-run
+     * @return true if successful
+     */
+    bool setTriggerMode(bool enable);
+
+    /**
+     * Check if trigger mode is currently enabled.
+     */
+    bool isTriggerModeEnabled() const { return triggerModeEnabled_; }
+
 private:
     // libcamera callback (implemented in cpp)
     void requestComplete(libcamera::Request* request);
@@ -133,6 +149,7 @@ private:
 
     // State
     std::atomic<bool> running_{false};
+    bool triggerModeEnabled_ = false;
 
     // Frame synchronization
     std::mutex frameMtx_;

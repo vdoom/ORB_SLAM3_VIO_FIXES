@@ -158,6 +158,22 @@ public:
     int exposureTimeUs() const;
 
     /**
+     * Enable or disable hardware trigger mode on OV9281 via I2C.
+     *
+     * Must be called AFTER start(). When enabled, the camera waits for
+     * external trigger pulses from the Pico instead of free-running.
+     *
+     * @param enable true to enable trigger mode, false for free-run
+     * @return true if successful
+     */
+    bool setTriggerMode(bool enable);
+
+    /**
+     * Check if trigger mode is currently enabled.
+     */
+    bool isTriggerModeEnabled() const;
+
+    /**
      * Get current configuration.
      */
     const PearConfig& config() const { return config_; }
