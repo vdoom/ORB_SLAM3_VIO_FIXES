@@ -150,7 +150,7 @@ sudo usermod -aG dialout $USER  # For serial/IMU access
 ## Architecture
 
 ```
-viewer_app/
+ext_view_app/
 ├── src/
 │   ├── main.cpp              # Application entry point
 │   ├── MainWindow.h/cpp      # Main window with toolbar

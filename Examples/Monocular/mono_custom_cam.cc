@@ -24,7 +24,7 @@
  * Based on mono_realsense_D435i.cc but adapted for:
  * - libcamera API instead of librealsense (for Raspberry Pi cameras)
  * - OV9281 global shutter monochrome camera at 1280x800
- * - Camera settings loaded from viewer_app config file
+ * - Camera settings loaded from ext_view_app config file
  *
  * Usage: ./mono_custom_cam path_to_vocabulary path_to_settings [trajectory_file_name]
  */
@@ -71,7 +71,7 @@ void exit_loop_handler(int s) {
 }
 
 // ============================================================================
-// Camera Settings (loaded from viewer_app INI file)
+// Camera Settings (loaded from ext_view_app INI file)
 // ============================================================================
 
 struct CameraSettings {
@@ -79,7 +79,7 @@ struct CameraSettings {
     int exposureTimeUs = 10000;   // microseconds
     float gain = 8.0f;
 
-    // Load settings from INI file (same format as viewer_app)
+    // Load settings from INI file (same format as ext_view_app)
     bool loadFromIniFile(const string& path) {
         ifstream file(path);
         if (!file.is_open()) {
@@ -580,7 +580,7 @@ int main(int argc, char** argv) {
         return 1;
     }
 
-    // Load camera settings from viewer_app config (if available)
+    // Load camera settings from ext_view_app config (if available)
     camera.loadSettings();
 
     if (!camera.start()) {
