@@ -53,19 +53,16 @@ find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(realsense2)
  
-# Check for libcamera (for custom camera support)
-find_package(PkgConfig QUIET)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LIBCAMERA libcamera)
-    if(LIBCAMERA_FOUND)
-        message(STATUS "libcamera found: ${LIBCAMERA_VERSION}")
-        # Build Pear VIO Camera Library as third-party
-        add_subdirectory(Thirdparty/pear)
-    else()
-        message(STATUS "libcamera not found - custom camera examples will not be built")
-    endif()
+# Check for PearAPI (unified camera + IMU library)
+# PearAPI is located in the parent VIO_Custom_Camera_Set directory
+set(PEARAPI_DIR "${CMAKE_SOURCE_DIR}/../../PearAPI")
+if(EXISTS "${PEARAPI_DIR}/CMakeLists.txt")
+    message(STATUS "PearAPI found: ${PEARAPI_DIR}")
+    add_subdirectory(${PEARAPI_DIR} ${CMAKE_BINARY_DIR}/PearAPI)
+    set(PEARAPI_FOUND TRUE)
 else()
-    message(STATUS "PkgConfig not found - custom camera examples will not be built")
+    message(STATUS "PearAPI not found at ${PEARAPI_DIR} - custom camera examples will not be built")
+    set(PEARAPI_FOUND FALSE)
 endif()
  
 # Include FetchContent for downloading dependencies
@@ -84,7 +81,6 @@ ${PROJECT_SOURCE_DIR}
 ${PROJECT_SOURCE_DIR}/include
 ${PROJECT_SOURCE_DIR}/include/CameraModels
 ${PROJECT_SOURCE_DIR}/Thirdparty/Sophus
-${PROJECT_SOURCE_DIR}/Thirdparty/pear/include
 ${EIGEN3_INCLUDE_DIR}
 ${Pangolin_INCLUDE_DIRS}
 )
@@ -293,14 +289,12 @@ if(realsense2_FOUND)
     target_link_libraries(mono_realsense_D435i ${PROJECT_NAME})
 endif()
 
-# Custom camera with libcamera (OV9281)
-if(LIBCAMERA_FOUND)
+# Custom camera with PearAPI (OV9281)
+if(PEARAPI_FOUND)
     add_executable(mono_custom_cam
             Examples/Monocular/mono_custom_cam.cc)
     target_compile_features(mono_custom_cam PRIVATE cxx_std_17)
-    target_include_directories(mono_custom_cam PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
-    target_compile_options(mono_custom_cam PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
-    target_link_libraries(mono_custom_cam ${PROJECT_NAME} ${LIBCAMERA_LIBRARIES})
+    target_link_libraries(mono_custom_cam ${PROJECT_NAME} PearAPI)
 endif()
 
 #Monocular inertial examples
@@ -324,21 +318,12 @@ if(realsense2_FOUND)
     target_link_libraries(mono_inertial_realsense_D435i ${PROJECT_NAME})
 endif()
  
-# Custom camera with libcamera (OV9281 + BMI160 via Pico)
-if(LIBCAMERA_FOUND)
+# Custom camera with PearAPI (OV9281 + BMI160 via Pico)
+if(PEARAPI_FOUND)
     add_executable(mono_inertial_custom_cam
             Examples/Monocular-Inertial/mono_inertial_custom_cam.cc)
     target_compile_features(mono_inertial_custom_cam PRIVATE cxx_std_17)
-    target_include_directories(mono_inertial_custom_cam PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
-    target_compile_options(mono_inertial_custom_cam PRIVATE ${LIBCAMERA_CFLAGS_OTHER})
-    target_link_libraries(mono_inertial_custom_cam ${PROJECT_NAME} ${LIBCAMERA_LIBRARIES})
-
-    # Pear VIO Camera version (uses the Pear library API)
-    add_executable(mono_inertial_pear
-            Examples/Monocular-Inertial/mono_inertial_pear.cc)
-    target_compile_features(mono_inertial_pear PRIVATE cxx_std_17)
-    target_include_directories(mono_inertial_pear PRIVATE ${LIBCAMERA_INCLUDE_DIRS})
-    target_link_libraries(mono_inertial_pear ${PROJECT_NAME} pear)
+    target_link_libraries(mono_inertial_custom_cam ${PROJECT_NAME} PearAPI)
 endif()
  
 #Stereo Inertial examples
