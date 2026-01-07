@@ -86,6 +86,7 @@ Table_TUMVI_rooms/
 *.pyc
 *.osa
 .idea/
+.claude/
 my_settings.txt
 
 borrar/*
