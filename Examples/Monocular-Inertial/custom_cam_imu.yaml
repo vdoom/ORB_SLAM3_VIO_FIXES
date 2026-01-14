@@ -6,17 +6,17 @@
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
-# Camera intrinsics from Kalibr calibration (2025-12-26)
-Camera.fx: 467.6812306800337
-Camera.fy: 473.54154155725905
-Camera.cx: 331.0972806675792
-Camera.cy: 187.42075600700787
+# Camera intrinsics from Kalibr calibration (2026-01-14)
+Camera.fx: 518.2115926590421
+Camera.fy: 523.3026603519435
+Camera.cx: 299.5711738189507
+Camera.cy: 181.02518023379923
 
 # Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.3911483697660045
-Camera.k2: 0.1302886701765253
-Camera.p1: 0.007681273999517641
-Camera.p2: -0.001592366891449487
+Camera.k1: -0.41758668290128664
+Camera.k2: 0.144897195928326
+Camera.p1: 0.004476421500237387
+Camera.p2: -0.0014878503719783838
 
 # Camera resolution
 Camera.width: 640
@@ -40,26 +40,26 @@ IMU.GyroWalk: 2.66e-05
 IMU.AccWalk: 0.000433
 
 # IMU sampling frequency
-IMU.Frequency: 200
+IMU.Frequency: 500
 
 #--------------------------------------------------------------------------------------------
 # Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
 #--------------------------------------------------------------------------------------------
 
-# T_cam_imu from Kalibr calibration (2025-12-26)
+# T_cam_imu from Kalibr calibration (2026-01-14)
 # Transforms points from IMU frame to camera frame
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [-0.9994949377717415, -0.002615866983061566, 0.031670595330528725, -0.001175854610620385,
-          0.0031939171249797515, -0.9998289891451475, 0.018215140910566946, 0.006177426154609258,
-          0.031617530929247795, 0.018307094387695087, 0.9993323681503659, -0.08140201506494665,
+   data: [-0.9940090876258015, -0.04727276369297384, 0.0985455200917216, 0.02204238822878294,
+          -0.09700112404537944, -0.03392668568243792, -0.9947058670443923, 0.0017013674497370647,
+          0.05036581828236847, -0.9983056975753627, 0.02913792266641738, -0.0771351024500619,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr timeshift_cam_imu: 0.012123041957760858
-Camera.TimeOffset: 0.012123041957760858
+# From Kalibr timeshift_cam_imu: 0.00845961615828016
+Camera.TimeOffset: 0.00845961615828016
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0
