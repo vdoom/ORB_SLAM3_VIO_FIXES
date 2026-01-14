@@ -5,8 +5,8 @@
  * Based on mono_inertial_realsense_D435i.cc but adapted for:
  * - PearAPI for camera and IMU access
  * - BMI160 IMU via Raspberry Pi Pico over serial
- * - Hardware-synchronized camera trigger (Pico triggers camera at 20Hz, IMU at 500Hz)
- * - Camera at 20 FPS with ~25 IMU samples between frames
+ * - Hardware-synchronized camera trigger (Pico triggers camera every 10 IMU samples)
+ * - Both accel and gyro at 200Hz (no interpolation needed)
  *
  * Usage: ./mono_inertial_custom_cam path_to_vocabulary path_to_settings [serial_port]
  *        Default serial port: /dev/ttyACM0
@@ -164,12 +164,35 @@ int main(int argc, char** argv) {
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, true);
     float imageScale = SLAM.GetImageScale();
 
-    // Calculate half exposure time for frame timestamp offset
-    // With hardware trigger, frame timestamp = trigger_time + half_exposure
-    // (the center of the sensor integration window)
+    // Calculate camera-IMU time offset
+    // Two components:
+    // 1. Camera.TimeOffset from Kalibr: represents full delay from trigger to image center
+    //    (Kalibr convention: Time_camera = Time_imu + td)
+    // 2. Half exposure time: if Kalibr wasn't used, this approximates the delay
+    //
+    // Kalibr's timeshift already includes the half-exposure effect, so we use it directly
+    // if available. If not, we fall back to just half-exposure as an approximation.
+    double cameraTimeOffset = 0.0;
+    {
+        cv::FileStorage fSettings(settingsPath, cv::FileStorage::READ);
+        if (fSettings.isOpened()) {
+            cv::FileNode node = fSettings["Camera.TimeOffset"];
+            if (!node.empty() && node.isReal()) {
+                cameraTimeOffset = static_cast<double>(node);
+                cout << "Camera.TimeOffset from Kalibr: " << cameraTimeOffset * 1000.0 << " ms" << endl;
+            }
+            fSettings.release();
+        }
+    }
+
+    // Calculate half exposure time
     double halfExposureTimeSec = camera->exposureTime() / 2.0 / 1e6;
     cout << "Exposure time: " << camera->exposureTime() << " us" << endl;
-    cout << "Half exposure time offset: " << halfExposureTimeSec * 1000.0 << " ms" << endl;
+    cout << "Half exposure time: " << halfExposureTimeSec * 1000.0 << " ms" << endl;
+
+    // Use Kalibr offset if available, otherwise fall back to half exposure
+    double frameTimeOffset = (cameraTimeOffset != 0.0) ? cameraTimeOffset : halfExposureTimeSec;
+    cout << "Using frame time offset: " << frameTimeOffset * 1000.0 << " ms" << endl;
 
     // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
     // and reset time base to avoid huge initial backlog
@@ -267,10 +290,10 @@ int main(int argc, char** argv) {
             // Convert to SI units and create IMU::Point
             double t = (imu.timestamp_ms - firstImuTimestamp) / 1000.0;
 
-            // Check for gaps in IMU stream (should be ~2ms at 500Hz)
+            // Check for gaps in IMU stream (should be ~5ms at 200Hz)
             if (lastImuTimestamp > 0 && t > lastImuTimestamp) {
                 double gap = t - lastImuTimestamp;
-                if (gap > 0.005 && imuGapWarnings < 10) {  // More than 5ms gap
+                if (gap > 0.010 && imuGapWarnings < 10) {  // More than 10ms gap
                     cout << "WARNING: IMU gap detected: " << fixed << setprecision(1)
                          << gap * 1000 << "ms at t=" << setprecision(3) << t << endl;
                     imuGapWarnings++;
@@ -297,8 +320,8 @@ int main(int argc, char** argv) {
         // Apply time offset to align trigger timestamp with actual image capture time
         double frameTime;
         if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            // Use Pico timestamp (relative to first IMU timestamp) + half exposure time
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + halfExposureTimeSec;
+            // Use Pico timestamp (relative to first IMU timestamp) + time offset
+            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + frameTimeOffset;
         } else {
             // No trigger - fall back to last IMU timestamp
             if (!vImuMeas.empty()) {
