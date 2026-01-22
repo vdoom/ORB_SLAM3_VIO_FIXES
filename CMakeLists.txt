@@ -233,8 +233,13 @@ if(realsense2_FOUND)
     add_executable(rgbd_inertial_realsense_D435i
             Examples/RGB-D-Inertial/rgbd_inertial_realsense_D435i.cc)
     target_link_libraries(rgbd_inertial_realsense_D435i ${PROJECT_NAME})
+
+    add_executable(rgbd_inertial_realsense_D455_VIO
+            Examples/RGB-D-Inertial/rgbd_inertial_realsense_D455_VIO.cc)
+    target_include_directories(rgbd_inertial_realsense_D455_VIO PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(rgbd_inertial_realsense_D455_VIO ${PROJECT_NAME} Threads::Threads)
 endif()
- 
+
 #Stereo examples
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Stereo)
  
@@ -365,7 +370,13 @@ target_link_libraries(uart_transfer_lib PRIVATE Threads::Threads)
             Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO.cc)
 	target_include_directories(stereo_inertial_realsense_D455_VIO PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(stereo_inertial_realsense_D455_VIO ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
- 
+
+    # v2: Refactored VIO with coordinate frame bridging for ArduPilot integration
+    add_executable(stereo_inertial_realsense_D455_VIO_v2
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_v2.cc)
+    target_include_directories(stereo_inertial_realsense_D455_VIO_v2 PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_realsense_D455_VIO_v2 ${PROJECT_NAME} Threads::Threads)
+
     add_executable(stereo_inertial_realsense_D455_VIO_GPS
             Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS.cc)
 	target_include_directories(stereo_inertial_realsense_D455_VIO_GPS PRIVATE ${MAVLINK_INCLUDE_DIR})
@@ -375,7 +386,21 @@ target_link_libraries(uart_transfer_lib PRIVATE Threads::Threads)
             Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS_v2.cc)
 	target_include_directories(stereo_inertial_realsense_D455_VIO_GPS_v2 PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS_v2 ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
- 
+
+    # v3: GPS VIO with coordinate frame bridging, EKF feedback, and proper reset_counter management
+    add_executable(stereo_inertial_realsense_D455_VIO_GPS_v3
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS_v3.cc)
+    target_include_directories(stereo_inertial_realsense_D455_VIO_GPS_v3 PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS_v3 ${PROJECT_NAME} Threads::Threads)
+
+    # v4: GPS VIO applying VIO v2 coordinate bridging approach to GPS output
+    # Key improvements: VIOBridgeState, EKF feedback, map change detection via position jump,
+    # STOP GPS messages when LOST (not send zeros), RECENTLY_LOST sends degraded quality
+    add_executable(stereo_inertial_realsense_D455_VIO_GPS_v4
+            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS_v4.cc)
+    target_include_directories(stereo_inertial_realsense_D455_VIO_GPS_v4 PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS_v4 ${PROJECT_NAME} Threads::Threads)
+
     add_executable(stereo_inertial_realsense_D455_axis_test
             Examples/Stereo-Inertial/stereo_inertial_realsense_D455_axis_test.cc)
     target_link_libraries(stereo_inertial_realsense_D455_axis_test ${PROJECT_NAME})
