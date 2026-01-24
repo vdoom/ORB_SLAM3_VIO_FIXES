@@ -11,7 +11,7 @@
  *   - OK/OK_KLT: Normal operation, send GPS with fix_type=3
  *   - RECENTLY_LOST: Send high-uncertainty estimate (fix_type=2, EPH/EPV=500)
  *   - LOST: Send very degraded estimate (fix_type=1, EPH/EPV=2000)
- *   - NOT_INITIALIZED/NO_IMAGES: No GPS sent (no valid position available)
+ *   - NOT_INITIALIZED/NO_IMAGES: Send no-fix GPS at origin (fix_type=0) to maintain ArduPilot link
  * - Never increment reset_counter for new map creation (conservative approach)
  * - stderr for unbuffered real-time output
  * - --vis/--novis command line flag for visualization control
@@ -79,6 +79,11 @@ constexpr uint8_t RECENTLY_LOST_FIX_TYPE = 2;     // 2D fix (degraded)
 constexpr float LOST_EPH_EPV = 2000;              // 20m accuracy (cm*100)
 constexpr uint8_t LOST_SATELLITES = 4;
 constexpr uint8_t LOST_FIX_TYPE = 1;              // No fix (very degraded)
+
+// GPS quality values for NOT_INITIALIZED (no valid position, maintaining GPS link)
+constexpr float NOT_INITIALIZED_EPH_EPV = 9999;   // Maximum uncertainty
+constexpr uint8_t NOT_INITIALIZED_SATELLITES = 0;
+constexpr uint8_t NOT_INITIALIZED_FIX_TYPE = 0;   // No fix
 
 // Earth constants
 constexpr double EARTH_RADIUS = 6378137.0;
@@ -874,9 +879,9 @@ public:
             case ORB_SLAM3::Tracking::NOT_INITIALIZED:
             case ORB_SLAM3::Tracking::SYSTEM_NOT_READY:
             case ORB_SLAM3::Tracking::NO_IMAGES_YET:
-                // No valid position ever received, don't send GPS
+                // Send GPS with no fix to maintain ArduPilot GPS link
                 handleTrackingNotInitialized();
-                return;
+                break;
         }
     }
 
@@ -964,18 +969,51 @@ private:
 
             state.messages_sent++;
         } else {
-            // No valid position ever received, can't send GPS
+            // No valid position ever received - send origin position with no fix
             static bool no_pos_logged = false;
             if (!no_pos_logged) {
-                std::cerr << "[VIOGPSBridge] LOST but no valid position available yet" << std::endl;
+                std::cerr << "[VIOGPSBridge] LOST but no valid position - sending origin with no-fix" << std::endl;
                 no_pos_logged = true;
             }
+            sendDegradedGPSAtOrigin();
         }
     }
 
     /**
+     * Send degraded GPS at origin when no valid position is available
+     * Used when LOST state occurs before first valid pose
+     */
+    void sendDegradedGPSAtOrigin() {
+        GPSCoord gps_origin = mavlink->getGPSOrigin();
+
+        auto now = std::chrono::high_resolution_clock::now();
+        uint64_t timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count();
+
+        GPSData gps_data;
+        gps_data.time_usec = timestamp_us;
+        gps_data.lat = static_cast<int32_t>(gps_origin.lat * 1e7);
+        gps_data.lon = static_cast<int32_t>(gps_origin.lon * 1e7);
+        gps_data.alt = static_cast<int32_t>(gps_origin.alt * 1000);
+        gps_data.vn = 0.0f;
+        gps_data.ve = 0.0f;
+        gps_data.vd = 0.0f;
+        gps_data.vel = 0;
+        gps_data.vz = 0;
+        gps_data.cog = 0;
+        gps_data.fix_type = NOT_INITIALIZED_FIX_TYPE;
+        gps_data.satellites_visible = NOT_INITIALIZED_SATELLITES;
+        gps_data.eph = NOT_INITIALIZED_EPH_EPV;
+        gps_data.epv = NOT_INITIALIZED_EPH_EPV;
+        gps_data.reset_counter = state.reset_counter;
+
+        mavlink->queueGPS(gps_data);
+        state.messages_sent++;
+    }
+
+    /**
      * Handle states where tracking has never been initialized
-     * Don't send any GPS messages as we have no valid position
+     * Send GPS with no fix to maintain ArduPilot GPS link (like v2 does)
      */
     void handleTrackingNotInitialized() {
         static bool logged = false;
@@ -983,12 +1021,37 @@ private:
 
         if (!logged || last_state != state.tracking_state_current) {
             std::cerr << "[VIOGPSBridge] NOT INITIALIZED (state=" << state.tracking_state_current
-                      << ") - no GPS available yet" << std::endl;
+                      << ") - sending no-fix GPS to maintain link" << std::endl;
             logged = true;
             last_state = state.tracking_state_current;
         }
 
-        // Don't send GPS messages until we have a valid initial position
+        // Send GPS with no fix to maintain ArduPilot GPS link (like v2 does)
+        GPSCoord gps_origin = mavlink->getGPSOrigin();
+
+        auto now = std::chrono::high_resolution_clock::now();
+        uint64_t timestamp_us = std::chrono::duration_cast<std::chrono::microseconds>(
+            now.time_since_epoch()).count();
+
+        GPSData gps_data;
+        gps_data.time_usec = timestamp_us;
+        gps_data.lat = static_cast<int32_t>(gps_origin.lat * 1e7);
+        gps_data.lon = static_cast<int32_t>(gps_origin.lon * 1e7);
+        gps_data.alt = static_cast<int32_t>(gps_origin.alt * 1000);
+        gps_data.vn = 0.0f;
+        gps_data.ve = 0.0f;
+        gps_data.vd = 0.0f;
+        gps_data.vel = 0;
+        gps_data.vz = 0;
+        gps_data.cog = 0;
+        gps_data.fix_type = NOT_INITIALIZED_FIX_TYPE;
+        gps_data.satellites_visible = NOT_INITIALIZED_SATELLITES;
+        gps_data.eph = NOT_INITIALIZED_EPH_EPV;
+        gps_data.epv = NOT_INITIALIZED_EPH_EPV;
+        gps_data.reset_counter = state.reset_counter;
+
+        mavlink->queueGPS(gps_data);
+        state.messages_sent++;
     }
 
     /**
