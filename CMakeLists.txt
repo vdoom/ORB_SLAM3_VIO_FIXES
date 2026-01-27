@@ -234,10 +234,6 @@ if(realsense2_FOUND)
             Examples/RGB-D-Inertial/rgbd_inertial_realsense_D435i.cc)
     target_link_libraries(rgbd_inertial_realsense_D435i ${PROJECT_NAME})
 
-    add_executable(rgbd_inertial_realsense_D455_VIO
-            Examples/RGB-D-Inertial/rgbd_inertial_realsense_D455_VIO.cc)
-    target_include_directories(rgbd_inertial_realsense_D455_VIO PRIVATE ${MAVLINK_INCLUDE_DIR})
-    target_link_libraries(rgbd_inertial_realsense_D455_VIO ${PROJECT_NAME} Threads::Threads)
 endif()
 
 #Stereo examples
@@ -329,6 +325,13 @@ if(PEARAPI_FOUND)
             Examples/Monocular-Inertial/mono_inertial_custom_cam.cc)
     target_compile_features(mono_inertial_custom_cam PRIVATE cxx_std_17)
     target_link_libraries(mono_inertial_custom_cam ${PROJECT_NAME} PearAPI)
+
+    # PearAPI + MAVLink VIOBridge (OV9281 + BMI160 + ArduPilot)
+    add_executable(mono_inertial_pear
+            Examples/Monocular-Inertial/mono_inertial_pear.cc)
+    target_compile_features(mono_inertial_pear PRIVATE cxx_std_17)
+    target_include_directories(mono_inertial_pear PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(mono_inertial_pear ${PROJECT_NAME} PearAPI Threads::Threads)
 endif()
  
 #Stereo Inertial examples
@@ -386,12 +389,6 @@ target_link_libraries(uart_transfer_lib PRIVATE Threads::Threads)
             Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS_v2.cc)
 	target_include_directories(stereo_inertial_realsense_D455_VIO_GPS_v2 PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS_v2 ${PROJECT_NAME} nlohmann_json::nlohmann_json uart_transfer_lib Threads::Threads)
-
-    # v3: GPS VIO with coordinate frame bridging, EKF feedback, and proper reset_counter management
-    add_executable(stereo_inertial_realsense_D455_VIO_GPS_v3
-            Examples/Stereo-Inertial/stereo_inertial_realsense_D455_VIO_GPS_v3.cc)
-    target_include_directories(stereo_inertial_realsense_D455_VIO_GPS_v3 PRIVATE ${MAVLINK_INCLUDE_DIR})
-    target_link_libraries(stereo_inertial_realsense_D455_VIO_GPS_v3 ${PROJECT_NAME} Threads::Threads)
 
     # v4: GPS VIO applying VIO v2 coordinate bridging approach to GPS output
     # Key improvements: VIOBridgeState, EKF feedback, map change detection via position jump,
