@@ -332,6 +332,13 @@ if(PEARAPI_FOUND)
     target_compile_features(mono_inertial_pear PRIVATE cxx_std_17)
     target_include_directories(mono_inertial_pear PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(mono_inertial_pear ${PROJECT_NAME} PearAPI Threads::Threads)
+
+    # PearAPI + MAVLink GPS VIOBridge (OV9281 + BMI160 + ArduPilot GPS_INPUT)
+    add_executable(mono_inertial_pear_fake_gps
+            Examples/Monocular-Inertial/mono_inertial_pear_fake_gps.cc)
+    target_compile_features(mono_inertial_pear_fake_gps PRIVATE cxx_std_17)
+    target_include_directories(mono_inertial_pear_fake_gps PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(mono_inertial_pear_fake_gps ${PROJECT_NAME} PearAPI Threads::Threads)
 endif()
  
 #Stereo Inertial examples

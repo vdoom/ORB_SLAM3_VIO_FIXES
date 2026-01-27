@@ -1,0 +1,15 @@
+[Unit]
+Description=VIO Launcher
+    
+[Service]
+#Environment="PYTHONPATH=/usr/lib/python3.8/site-packages:$PYTHONPATH"
+Type=simple
+User=orca
+ExecStartPre=/bin/sleep 60
+ExecStart=/bin/bash /home/orca/src/VIO_Custom_Camera_Set/VIO_libs/ORB_SLAM3/Examples/Monocular-Inertial/vio_launcher.sh
+WorkingDirectory=/home/orca/src/VIO_Custom_Camera_Set/VIO_libs/ORB_SLAM3/Examples/Monocular-Inertial
+Restart=always
+  
+[Install]
+WantedBy=multi-user.target
+
