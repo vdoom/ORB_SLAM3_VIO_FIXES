@@ -6,17 +6,17 @@
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
-# Camera intrinsics from Kalibr calibration (2026-01-27)
-Camera.fx: 523.4369972098391
-Camera.fy: 528.500987318708
-Camera.cx: 292.62891120659185
-Camera.cy: 180.18640347689634
+# Camera intrinsics from Kalibr calibration (2026-01-31)
+Camera.fx: 532.9655622598409
+Camera.fy: 538.0585059709547
+Camera.cx: 296.1702254400371
+Camera.cy: 184.74183698582925
 
 # Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.4407557587686822
-Camera.k2: 0.20762148576628348
-Camera.p1: 0.0012563667785834738
-Camera.p2: -0.0007229724216245537
+Camera.k1: -0.4265980263872616
+Camera.k2: 0.15965013413928592
+Camera.p1: 0.0015871551140746781
+Camera.p2: 0.0006992574112767907
 
 # Camera resolution
 Camera.width: 640
@@ -29,15 +29,15 @@ Camera.fps: 20.0
 Camera.RGB: 0
 
 #--------------------------------------------------------------------------------------------
-# IMU Parameters. ICM-42688 IMU (SYSROX sensor) via Raspberry Pi Pico.
+# IMU Parameters. ICM-42688 IMU via Raspberry Pi Pico (SYSROX sensor PCB).
 # Noise parameters from Kalibr IMU-camera calibration.
 #--------------------------------------------------------------------------------------------
 
-# IMU noise parameters (continuous-time, from Kalibr)
-IMU.NoiseGyro: 4.5e-05
-IMU.NoiseAcc: 0.00069
-IMU.GyroWalk: 1.0e-05
-IMU.AccWalk: 0.0001
+# IMU noise parameters (continuous-time, from Kalibr 2026-01-31)
+IMU.NoiseGyro: 0.000135
+IMU.NoiseAcc: 0.00207
+IMU.GyroWalk: 3.0e-05
+IMU.AccWalk: 0.0003
 
 # IMU sampling frequency
 IMU.Frequency: 500
@@ -46,20 +46,21 @@ IMU.Frequency: 500
 # Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
 #--------------------------------------------------------------------------------------------
 
-# T_cam_imu from Kalibr calibration (2026-01-27)
+# T_cam_imu from Kalibr calibration (2026-01-31)
 # Transforms points from IMU frame to camera frame
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [-0.991833229322039, -0.10346093396698244, 0.07458337854573681, 0.02317749738655792,
-          -0.06949779891312732, -0.051922674049155265, -0.9962299392538938, -0.008193708468264836,
-          0.10694344841479302, -0.9932773384419209, 0.044308326293007544, -0.07291657365313599,
+   data: [-0.9948965803054255, -0.07823336971112475, 0.0637207529790149, 0.024481889769978702,
+          -0.06149388366756402, -0.03055344424576667, -0.9976397091717035, 9.64225766529943e-05,
+          0.07999560467957144, -0.9964667716027282, 0.025586643460728253, -0.06882535095124133,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr timeshift_cam_imu: 0.008430923286551274
-Camera.TimeOffset: 0.008430923286551274
+# From Kalibr: t_imu = t_cam + 0.0074, so t_cam = t_imu - 0.0074
+# Negated because our timestamps are IMU-based (trigger timestamps)
+Camera.TimeOffset: -0.007434667357124599
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0
@@ -69,8 +70,8 @@ IMU.InsertKFsWhenLost: 0
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-# Increased from 800 to 1200 for more robust tracking
-ORBextractor.nFeatures: 1200
+# Increased for more robust tracking at 640x400 resolution
+ORBextractor.nFeatures: 1500
 
 # ORB Extractor: Scale factor between levels in the scale pyramid
 ORBextractor.scaleFactor: 1.2
@@ -79,9 +80,10 @@ ORBextractor.scaleFactor: 1.2
 ORBextractor.nLevels: 8
 
 # ORB Extractor: Fast threshold
-# Lowered thresholds slightly for better feature detection in low-texture areas
-ORBextractor.iniThFAST: 15
-ORBextractor.minThFAST: 5
+# Lowered thresholds for better feature detection in low-texture areas
+# Lower values = more features detected but more noise
+ORBextractor.iniThFAST: 12
+ORBextractor.minThFAST: 4
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters

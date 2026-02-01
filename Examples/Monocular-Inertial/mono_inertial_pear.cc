@@ -1550,7 +1550,15 @@ int main(int argc, char** argv) {
         if (frameCount % 100 == 0) {
             auto now = chrono::steady_clock::now();
             double elapsed = chrono::duration<double>(now - startTime).count();
-            double fps = frameCount / elapsed;
+            double avgFps = frameCount / elapsed;
+
+            // Instantaneous FPS (over the last 100 frames)
+            static auto lastStatTime = startTime;
+            static uint64_t lastStatFrameCount = 0;
+            double windowElapsed = chrono::duration<double>(now - lastStatTime).count();
+            double instantFps = (windowElapsed > 0) ? (frameCount - lastStatFrameCount) / windowElapsed : avgFps;
+            lastStatTime = now;
+            lastStatFrameCount = frameCount;
 
             const char* stateStr = "UNKNOWN";
             switch (tracking_state) {
@@ -1565,7 +1573,8 @@ int main(int argc, char** argv) {
 
             cout << "Frames: " << frameCount
                  << " | IMU: " << imuCount
-                 << " | FPS: " << fixed << setprecision(1) << fps
+                 << " | FPS: " << fixed << setprecision(1) << instantFps
+                 << " (avg: " << avgFps << ")"
                  << " | State: " << stateStr
                  << " | MAVLink sent: " << vio_bridge.getMessagesSent()
                  << " | Maps: " << vio_bridge.getMapTransitions()
