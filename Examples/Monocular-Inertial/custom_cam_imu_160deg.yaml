@@ -4,19 +4,19 @@
 # Camera Parameters. Calibrated using Kalibr with April grid.
 # OV9281 global shutter monochrome camera, 640x400, 160° lens
 #--------------------------------------------------------------------------------------------
-Camera.type: "PinHole"
+Camera.type: "KannalaBrandt8"
 
-# Camera intrinsics from Kalibr calibration (2026-01-16)
-Camera.fx: 293.95353856705776
-Camera.fy: 297.1297355588994
-Camera.cx: 293.2222392262809
-Camera.cy: 179.83271016382574
+# Camera intrinsics from Kalibr calibration (2026-02-02)
+Camera.fx: 291.6860736681568
+Camera.fy: 294.56816028811346
+Camera.cx: 295.7509097524283
+Camera.cy: 184.4328311195461
 
-# Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.44115739878303084
-Camera.k2: 0.1410862949871515
-Camera.p1: 0.003273693386229043
-Camera.p2: 0.0010519401413344649
+# Distortion parameters (equidistant/fisheye model: k1, k2, k3, k4)
+Camera.k1: -0.1931512824547078
+Camera.k2: 0.09555535206536514
+Camera.k3: -0.14581172312881072
+Camera.k4: 0.076729685407193
 
 # Camera resolution
 Camera.width: 640
@@ -29,15 +29,15 @@ Camera.fps: 20.0
 Camera.RGB: 0
 
 #--------------------------------------------------------------------------------------------
-# IMU Parameters. BMI160 IMU via Raspberry Pi Pico.
-# Noise parameters from Kalibr IMU-camera calibration.
+# IMU Parameters. ICM-42688 IMU via SYSROX sensor PCB.
+# Noise parameters adjusted 3x from datasheet values.
 #--------------------------------------------------------------------------------------------
 
-# IMU noise parameters (continuous-time, from Kalibr)
-IMU.NoiseGyro: 0.000187
-IMU.NoiseAcc: 0.00186
-IMU.GyroWalk: 2.66e-05
-IMU.AccWalk: 0.000433
+# IMU noise parameters (continuous-time, ICM-42688 adjusted 3x from datasheet)
+IMU.NoiseGyro: 0.000135
+IMU.NoiseAcc: 0.00207
+IMU.GyroWalk: 3.0e-05
+IMU.AccWalk: 0.0003
 
 # IMU sampling frequency
 IMU.Frequency: 500
@@ -46,20 +46,20 @@ IMU.Frequency: 500
 # Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
 #--------------------------------------------------------------------------------------------
 
-# T_cam_imu from Kalibr calibration (2026-01-16)
+# T_cam_imu from Kalibr calibration (2026-02-02)
 # Transforms points from IMU frame to camera frame
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [-0.9933291277681384, -0.06895391340987965, 0.09242619624786869, 0.0225857075718195,
-          -0.09044292435222877, -0.031356771447959286, -0.9954078713366571, -0.0004897336203570923,
-          0.07153545527920921, -0.9971269280837926, 0.02491120085770643, -0.05984751455724375,
+   data: [-0.9937483951246618, -0.09190984130156896, 0.06337750593926034, 0.021821477891131112,
+          -0.06169608990611436, -0.021024351822996605, -0.9978735236094406, -0.002638991460309607,
+          0.09304686817651212, -0.9955453569287261, 0.015222438050440832, -0.06517041526934045,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr timeshift_cam_imu: 0.008743040804632635
-Camera.TimeOffset: 0.008743040804632635
+# From Kalibr timeshift_cam_imu: 0.007604010662153993
+Camera.TimeOffset: -0.007604010662153993
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0
