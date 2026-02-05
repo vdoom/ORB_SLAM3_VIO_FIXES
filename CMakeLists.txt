@@ -52,6 +52,18 @@ MESSAGE(${OpenCV_VERSION})
 find_package(Eigen3 3.1.0 REQUIRED)
 find_package(Pangolin REQUIRED)
 find_package(realsense2)
+
+# Optional CUDA acceleration for ORB extraction (Jetson Xavier NX, desktop NVIDIA GPU)
+option(USE_CUDA "Enable CUDA acceleration for ORB extraction" OFF)
+if(USE_CUDA)
+    enable_language(CUDA)
+    add_definitions(-DUSE_CUDA)
+    # SM 7.2 = Xavier NX/AGX, SM 7.5 = Turing, SM 8.6 = Ampere desktop
+    set(CMAKE_CUDA_ARCHITECTURES "72;75;86" CACHE STRING "CUDA architectures")
+    set(CMAKE_CUDA_FLAGS "${CMAKE_CUDA_FLAGS} -O3")
+    message(STATUS "CUDA acceleration ENABLED for ORB extraction")
+    message(STATUS "CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
+endif()
  
 # Check for PearAPI (unified camera + IMU library)
 # PearAPI is located in the parent VIO_Custom_Camera_Set directory
@@ -146,7 +158,18 @@ include/TwoViewReconstruction.h
 include/SerializationUtils.h
 include/Config.h
 include/Settings.h)
- 
+
+# Add CUDA source files if enabled
+if(USE_CUDA)
+    target_sources(${PROJECT_NAME} PRIVATE
+        src/cuda/ORBextractor_cuda.cu
+        include/cuda/ORBextractor_cuda.h)
+    target_include_directories(${PROJECT_NAME} PRIVATE
+        ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON)
+endif()
+
 add_subdirectory(Thirdparty/g2o)
  
 target_link_libraries(${PROJECT_NAME}

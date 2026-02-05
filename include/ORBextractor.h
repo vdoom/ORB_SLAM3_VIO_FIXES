@@ -21,8 +21,12 @@
 
 #include <vector>
 #include <list>
+#include <memory>
 #include <opencv2/opencv.hpp>
 
+#ifdef USE_CUDA
+#include "cuda/ORBextractor_cuda.h"
+#endif
 
 namespace ORB_SLAM3
 {
@@ -103,9 +107,14 @@ protected:
     std::vector<int> umax;
 
     std::vector<float> mvScaleFactor;
-    std::vector<float> mvInvScaleFactor;    
+    std::vector<float> mvInvScaleFactor;
     std::vector<float> mvLevelSigma2;
     std::vector<float> mvInvLevelSigma2;
+
+#ifdef USE_CUDA
+    std::unique_ptr<cuda::GpuPyramidBuilder> gpuPyramidBuilder_;
+    bool cudaReady_;
+#endif
 };
 
 } //namespace ORB_SLAM

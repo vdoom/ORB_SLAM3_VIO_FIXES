@@ -61,6 +61,10 @@
 
 #include "ORBextractor.h"
 
+#ifdef USE_CUDA
+#include "cuda/ORBextractor_cuda.h"
+#endif
+
 
 using namespace cv;
 using namespace std;
@@ -466,6 +470,16 @@ namespace ORB_SLAM3
             umax[v] = v0;
             ++v0;
         }
+
+#ifdef USE_CUDA
+        cudaReady_ = false;
+        if (cuda::IsAvailable()) {
+            cuda::InitConstantMemory(bit_pattern_31_, 1024, &umax[0], (int)umax.size());
+            gpuPyramidBuilder_.reset(
+                new cuda::GpuPyramidBuilder(nlevels, scaleFactor, EDGE_THRESHOLD));
+            cudaReady_ = true;
+        }
+#endif
     }
 
     static void computeOrientation(const Mat& image, vector<KeyPoint>& keypoints, const vector<int>& umax)
@@ -890,9 +904,7 @@ namespace ORB_SLAM3
             }
         }
 
-        // compute orientations
-        for (int level = 0; level < nlevels; ++level)
-            computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
+        // Orientation is now computed in operator() to allow GPU path
     }
 
     void ORBextractor::ComputeKeyPointsOld(std::vector<std::vector<KeyPoint> > &allKeypoints)
@@ -1069,7 +1081,7 @@ namespace ORB_SLAM3
             }
         }
 
-        // and compute orientations
+        // compute orientations
         for (int level = 0; level < nlevels; ++level)
             computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
     }
@@ -1096,9 +1108,22 @@ namespace ORB_SLAM3
         // Pre-compute the scale pyramid
         ComputePyramid(image);
 
+        // Detect keypoints (FAST + OctTree distribution, always on CPU)
         vector < vector<KeyPoint> > allKeypoints;
         ComputeKeyPointsOctTree(allKeypoints);
         //ComputeKeyPointsOld(allKeypoints);
+
+        // Compute keypoint orientations (moved here from ComputeKeyPointsOctTree for GPU path)
+#ifdef USE_CUDA
+        if (cudaReady_) {
+            cuda::ComputeOrientationGPU(gpuPyramidBuilder_->GetPyramidLevels(),
+                                        allKeypoints, nlevels);
+        } else
+#endif
+        {
+            for (int level = 0; level < nlevels; ++level)
+                computeOrientation(mvImagePyramid[level], allKeypoints[level], umax);
+        }
 
         Mat descriptors;
 
@@ -1120,47 +1145,94 @@ namespace ORB_SLAM3
         int offset = 0;
         //Modified for speeding up stereo fisheye matching
         int monoIndex = 0, stereoIndex = nkeypoints-1;
-        for (int level = 0; level < nlevels; ++level)
+
+#ifdef USE_CUDA
+        if (cudaReady_ && nkeypoints > 0) {
+            // GPU path: compute descriptors on GPU using pre-blurred pyramid
+            std::vector<cv::Mat> levelDescriptors;
+            cuda::ComputeDescriptorsGPU(gpuPyramidBuilder_->GetBlurredLevels(),
+                                        allKeypoints, levelDescriptors, nlevels);
+
+            // Assemble output: scale keypoints + categorize mono/stereo
+            for (int level = 0; level < nlevels; ++level)
+            {
+                vector<KeyPoint>& keypoints = allKeypoints[level];
+                int nkeypointsLevel = (int)keypoints.size();
+
+                if(nkeypointsLevel==0)
+                    continue;
+
+                cv::Mat& desc = levelDescriptors[level];
+                offset += nkeypointsLevel;
+
+                float scale = mvScaleFactor[level];
+                int i = 0;
+                for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
+                             keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint){
+
+                    // Scale keypoint coordinates
+                    if (level != 0){
+                        keypoint->pt *= scale;
+                    }
+
+                    if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
+                        _keypoints.at(stereoIndex) = (*keypoint);
+                        desc.row(i).copyTo(descriptors.row(stereoIndex));
+                        stereoIndex--;
+                    }
+                    else{
+                        _keypoints.at(monoIndex) = (*keypoint);
+                        desc.row(i).copyTo(descriptors.row(monoIndex));
+                        monoIndex++;
+                    }
+                    i++;
+                }
+            }
+        } else
+#endif
         {
-            vector<KeyPoint>& keypoints = allKeypoints[level];
-            int nkeypointsLevel = (int)keypoints.size();
+            // CPU path: blur + descriptors per level
+            for (int level = 0; level < nlevels; ++level)
+            {
+                vector<KeyPoint>& keypoints = allKeypoints[level];
+                int nkeypointsLevel = (int)keypoints.size();
 
-            if(nkeypointsLevel==0)
-                continue;
+                if(nkeypointsLevel==0)
+                    continue;
 
-            // preprocess the resized image
-            Mat workingMat = mvImagePyramid[level].clone();
-            GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
+                // preprocess the resized image
+                Mat workingMat = mvImagePyramid[level].clone();
+                GaussianBlur(workingMat, workingMat, Size(7, 7), 2, 2, BORDER_REFLECT_101);
 
-            // Compute the descriptors
-            //Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
-            Mat desc = cv::Mat(nkeypointsLevel, 32, CV_8U);
-            computeDescriptors(workingMat, keypoints, desc, pattern);
+                // Compute the descriptors
+                //Mat desc = descriptors.rowRange(offset, offset + nkeypointsLevel);
+                Mat desc = cv::Mat(nkeypointsLevel, 32, CV_8U);
+                computeDescriptors(workingMat, keypoints, desc, pattern);
 
-            offset += nkeypointsLevel;
+                offset += nkeypointsLevel;
 
+                float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
+                int i = 0;
+                for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
+                             keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint){
 
-            float scale = mvScaleFactor[level]; //getScale(level, firstLevel, scaleFactor);
-            int i = 0;
-            for (vector<KeyPoint>::iterator keypoint = keypoints.begin(),
-                         keypointEnd = keypoints.end(); keypoint != keypointEnd; ++keypoint){
+                    // Scale keypoint coordinates
+                    if (level != 0){
+                        keypoint->pt *= scale;
+                    }
 
-                // Scale keypoint coordinates
-                if (level != 0){
-                    keypoint->pt *= scale;
+                    if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
+                        _keypoints.at(stereoIndex) = (*keypoint);
+                        desc.row(i).copyTo(descriptors.row(stereoIndex));
+                        stereoIndex--;
+                    }
+                    else{
+                        _keypoints.at(monoIndex) = (*keypoint);
+                        desc.row(i).copyTo(descriptors.row(monoIndex));
+                        monoIndex++;
+                    }
+                    i++;
                 }
-
-                if(keypoint->pt.x >= vLappingArea[0] && keypoint->pt.x <= vLappingArea[1]){
-                    _keypoints.at(stereoIndex) = (*keypoint);
-                    desc.row(i).copyTo(descriptors.row(stereoIndex));
-                    stereoIndex--;
-                }
-                else{
-                    _keypoints.at(monoIndex) = (*keypoint);
-                    desc.row(i).copyTo(descriptors.row(monoIndex));
-                    monoIndex++;
-                }
-                i++;
             }
         }
         //cout << "[ORBextractor]: extracted " << _keypoints.size() << " KeyPoints" << endl;
@@ -1169,6 +1241,12 @@ namespace ORB_SLAM3
 
     void ORBextractor::ComputePyramid(cv::Mat image)
     {
+#ifdef USE_CUDA
+        if (cudaReady_) {
+            gpuPyramidBuilder_->Build(image, mvImagePyramid, mvInvScaleFactor);
+            return;
+        }
+#endif
         for (int level = 0; level < nlevels; ++level)
         {
             float scale = mvInvScaleFactor[level];
