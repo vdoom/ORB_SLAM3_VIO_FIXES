@@ -1233,6 +1233,21 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Set up ICM error callback to display sensor errors in terminal
+    imuReader.setICMErrorCallback([](const pearvio::ICMError& err) {
+        if (err.isRecovery()) {
+            // Recovery notifications in green
+            cout << "\033[32m[IMU] " << err.description() << "\033[0m" << endl;
+        } else if (err.isCritical()) {
+            // Critical errors in red with emphasis
+            cerr << "\033[31m[IMU ERROR] " << err.description() << "\033[0m" << endl;
+            cerr << "\033[31m[IMU ERROR] *** CRITICAL - Sensor may need attention ***\033[0m" << endl;
+        } else {
+            // Non-critical errors in yellow
+            cerr << "\033[33m[IMU WARNING] " << err.description() << "\033[0m" << endl;
+        }
+    });
+
     // ---- Initialize camera using PearAPI ----
     auto camera = pearvio::CameraBackend::create();
     if (!camera) {
