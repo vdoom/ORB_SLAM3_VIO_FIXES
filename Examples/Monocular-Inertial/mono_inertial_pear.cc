@@ -1268,6 +1268,21 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Apply camera settings AFTER start() - start() reinitializes the sensor,
+    // so V4L2 control writes must come after to avoid being reset.
+    // This matches the sequence used in PearCameraApp (MainWindow.cpp).
+    camera->setTriggerMode(camConfig.triggerMode);
+    camera->setAutoExposure(camConfig.autoExposure);
+    if (!camConfig.autoExposure) {
+        camera->setGain(camConfig.gain);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        camera->setExposureTime(camConfig.exposureTimeUs);
+    }
+    cout << "Camera settings applied: trigger=" << camConfig.triggerMode
+         << " autoExpo=" << camConfig.autoExposure
+         << " exposure=" << camera->exposureTime() << "us"
+         << " gain=" << camera->gain() << endl;
+
     // ---- Wait for first IMU data to establish time base ----
     cout << "Waiting for IMU data..." << endl;
     uint64_t firstImuTimestamp = 0;
