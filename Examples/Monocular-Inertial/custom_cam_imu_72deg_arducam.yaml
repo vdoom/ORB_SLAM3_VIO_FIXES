@@ -2,21 +2,21 @@
 
 #--------------------------------------------------------------------------------------------
 # Camera Parameters. Calibrated using Kalibr with April grid.
-# OV9281 global shutter monochrome camera, 640x400
+# Resolution: 640x400
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
-# Camera intrinsics from Kalibr calibration (2026-02-08)
-Camera.fx: 345.55447340482806
-Camera.fy: 348.2974154663233
-Camera.cx: 292.3872208300158
-Camera.cy: 185.06003132708986
+# Camera intrinsics from Kalibr calibration (2026-02-10)
+Camera.fx: 345.0592653819115
+Camera.fy: 347.7649647695906
+Camera.cx: 291.5874246667511
+Camera.cy: 184.76949119326292
 
 # Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.31905767205558355
-Camera.k2: 0.0799367597680812
-Camera.p1: 0.0012754711673450604
-Camera.p2: -0.0007645394373161219
+Camera.k1: -0.29630290144892685
+Camera.k2: 0.06211057762978921
+Camera.p1: 0.001994662738142783
+Camera.p2: 0.0018520964501777364
 
 # Camera resolution
 Camera.width: 640
@@ -29,15 +29,15 @@ Camera.fps: 20.0
 Camera.RGB: 0
 
 #--------------------------------------------------------------------------------------------
-# IMU Parameters. ICM-42688 IMU via Raspberry Pi Pico (SYSROX sensor PCB).
-# Noise parameters from Kalibr IMU-camera calibration.
+# IMU Parameters. From Kalibr calibration.
+# Source: kalibr_data_2026-02-10_13-14-11-imu.yaml
 #--------------------------------------------------------------------------------------------
 
-# IMU noise parameters (continuous-time, from Kalibr 2026-02-08)
-IMU.NoiseGyro: 0.000135
-IMU.NoiseAcc: 0.00207
-IMU.GyroWalk: 3.0e-05
-IMU.AccWalk: 0.0003
+# IMU noise parameters (continuous-time, from Kalibr 2026-02-10)
+IMU.NoiseGyro: 0.00027
+IMU.NoiseAcc: 0.00414
+IMU.GyroWalk: 6e-05
+IMU.AccWalk: 0.0006
 
 # IMU sampling frequency
 IMU.Frequency: 500
@@ -46,31 +46,36 @@ IMU.Frequency: 500
 # Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
 #--------------------------------------------------------------------------------------------
 
-# T_cam_imu from Kalibr calibration (2026-02-08)
+# T_cam_imu from Kalibr calibration (2026-02-10)
 # Transforms points from IMU frame to camera frame
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [0.04500611507618252, -0.998936226158045, -0.010043190472765608, 0.002451180448047921,
-          0.9979866321509108, 0.0445090536663198, 0.04518435780013817, 0.005904210515595411,
-          -0.044689278958511464, -0.012056542242761894, 0.9989281796682464, 0.06483562846025537,
+   data: [0.0425801997986775, -0.9990641302211013, -0.00760199254525569, 0.0015277657040238149,
+          0.9975315685985257, 0.04208718209347656, 0.05620888499867664, -0.003116094505273255,
+          -0.05583633435737538, -0.009976613101847748, 0.998390089572481, -0.032200390102634285,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr: t_imu = t_cam + 0.00464, so t_cam = t_imu - 0.00464
+# From Kalibr: t_imu = t_cam + 0.00568391, so t_cam = t_imu - 0.00568391
 # Negated because our timestamps are IMU-based (trigger timestamps)
-Camera.TimeOffset: -0.004638011649991359
+Camera.TimeOffset: -0.005683907835043637
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0
+
+#--------------------------------------------------------------------------------------------
+# Image Preprocessing (for dark cameras)
+# Set to 0 to disable. Typical values: 1.0 (gentle) - 3.0 (aggressive)
+#--------------------------------------------------------------------------------------------
+ImagePreprocess.CLAHE: 1.5
 
 #--------------------------------------------------------------------------------------------
 # ORB Parameters
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-# Increased for more robust tracking at 640x400 resolution
 ORBextractor.nFeatures: 1500
 
 # ORB Extractor: Scale factor between levels in the scale pyramid
@@ -80,10 +85,8 @@ ORBextractor.scaleFactor: 1.2
 ORBextractor.nLevels: 8
 
 # ORB Extractor: Fast threshold
-# Lowered thresholds for better feature detection in low-texture areas
-# Lower values = more features detected but more noise
-ORBextractor.iniThFAST: 12
-ORBextractor.minThFAST: 4
+ORBextractor.iniThFAST: 8
+ORBextractor.minThFAST: 3
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters
