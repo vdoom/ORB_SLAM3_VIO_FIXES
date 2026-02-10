@@ -42,7 +42,7 @@ float Frame::mfGridElementWidthInv, Frame::mfGridElementHeightInv;
 //For stereo fisheye matching
 cv::BFMatcher Frame::BFmatcher = cv::BFMatcher(cv::NORM_HAMMING);
 
-Frame::Frame(): mpcpi(NULL), mpImuPreintegrated(NULL), mpPrevFrame(NULL), mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbIsSet(false), mbImuPreintegrated(false), mbHasPose(false), mbHasVelocity(false)
+Frame::Frame(): mpcpi(NULL), mpImuPreintegrated(NULL), mpPrevFrame(NULL), mpImuPreintegratedFrame(NULL), mpReferenceKF(static_cast<KeyFrame*>(NULL)), mbIsSet(false), mbImuPreintegrated(false), mpMutexImu(new std::mutex()), mbHasPose(false), mbHasVelocity(false)
 {
 #ifdef REGISTER_TIMES
     mTimeStereoMatch = 0;
@@ -129,6 +129,8 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
 
+    mpMutexImu = new std::mutex();
+
     N = mvKeys.size();
     if(mvKeys.empty())
         return;
@@ -183,8 +185,6 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
         mVw.setZero();
     }
 
-    mpMutexImu = new std::mutex();
-
     //Set no stereo fisheye information
     Nleft = -1;
     Nright = -1;
@@ -226,6 +226,7 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
 
+    mpMutexImu = new std::mutex();
 
     N = mvKeys.size();
 
@@ -271,8 +272,6 @@ Frame::Frame(const cv::Mat &imGray, const cv::Mat &imDepth, const double &timeSt
         mVw.setZero();
     }
 
-    mpMutexImu = new std::mutex();
-
     //Set no stereo fisheye information
     Nleft = -1;
     Nright = -1;
@@ -315,6 +314,7 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
 
+    mpMutexImu = new std::mutex();
 
     N = mvKeys.size();
     if(mvKeys.empty())
@@ -377,8 +377,6 @@ Frame::Frame(const cv::Mat &imGray, const double &timeStamp, ORBextractor* extra
     {
         mVw.setZero();
     }
-
-    mpMutexImu = new std::mutex();
 }
 
 
@@ -1066,6 +1064,8 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mTimeORB_Ext = std::chrono::duration_cast<std::chrono::duration<double,std::milli> >(time_EndExtORB - time_StartExtORB).count();
 #endif
 
+    mpMutexImu = new std::mutex();
+
     Nleft = mvKeys.size();
     Nright = mvKeysRight.size();
     N = Nleft + Nright;
@@ -1116,8 +1116,6 @@ Frame::Frame(const cv::Mat &imLeft, const cv::Mat &imRight, const double &timeSt
     mvbOutlier = vector<bool>(N,false);
 
     AssignFeaturesToGrid();
-
-    mpMutexImu = new std::mutex();
 
     UndistortKeyPoints();
 
