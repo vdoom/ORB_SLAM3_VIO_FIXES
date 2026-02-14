@@ -2,21 +2,22 @@
 
 #--------------------------------------------------------------------------------------------
 # Camera Parameters. Calibrated using Kalibr with April grid.
-# OV9281 global shutter monochrome camera, 640x400
+# Source: kalibr_data_2026-02-14_14-40-54-camchain-imucam.yaml
+# Resolution: 640x400
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
-# Camera intrinsics from Kalibr calibration (2026-01-31)
-Camera.fx: 532.9655622598409
-Camera.fy: 538.0585059709547
-Camera.cx: 296.1702254400371
-Camera.cy: 184.74183698582925
+# Camera intrinsics from Kalibr calibration (2026-02-14)
+Camera.fx: 563.1540999056722
+Camera.fy: 567.1871022464543
+Camera.cx: 300.24899803441224
+Camera.cy: 187.65495881196077
 
 # Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.4265980263872616
-Camera.k2: 0.15965013413928592
-Camera.p1: 0.0015871551140746781
-Camera.p2: 0.0006992574112767907
+Camera.k1: -0.43327731522944196
+Camera.k2: 0.18315996663472772
+Camera.p1: -0.0009510057175334491
+Camera.p2: -0.0033196157394640878
 
 # Camera resolution
 Camera.width: 640
@@ -29,14 +30,14 @@ Camera.fps: 20.0
 Camera.RGB: 0
 
 #--------------------------------------------------------------------------------------------
-# IMU Parameters. ICM-42688 IMU via Raspberry Pi Pico (SYSROX sensor PCB).
-# Noise parameters from Kalibr IMU-camera calibration.
+# IMU Parameters. From Kalibr calibration.
+# Source: kalibr_data_2026-02-14_14-40-54-imu.yaml
 #--------------------------------------------------------------------------------------------
 
-# IMU noise parameters (continuous-time, from Kalibr 2026-01-31)
+# IMU noise parameters (continuous-time, from Kalibr 2026-02-14)
 IMU.NoiseGyro: 0.000135
 IMU.NoiseAcc: 0.00207
-IMU.GyroWalk: 3.0e-05
+IMU.GyroWalk: 3e-05
 IMU.AccWalk: 0.0003
 
 # IMU sampling frequency
@@ -46,21 +47,21 @@ IMU.Frequency: 500
 # Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
 #--------------------------------------------------------------------------------------------
 
-# T_cam_imu from Kalibr calibration (2026-01-31)
-# Transforms points from IMU frame to camera frame
+# T_ic = inv(T_cam_imu) from Kalibr calibration (2026-02-14)
+# Tbc = T_ic: transforms points from camera frame to IMU/body frame
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [-0.9948965803054255, -0.07823336971112475, 0.0637207529790149, 0.024481889769978702,
-          -0.06149388366756402, -0.03055344424576667, -0.9976397091717035, 9.64225766529943e-05,
-          0.07999560467957144, -0.9964667716027282, 0.025586643460728253, -0.06882535095124133,
+   data: [-0.04353246840068667, -0.021540815368572552, -0.9988197622535315, -0.0484315569448966,
+          0.9980764714498125, -0.0451086504936353, -0.042527247605926854, -0.012913874674142525,
+          -0.04413933997281755, -0.998749819986918, 0.02346307189742855, 0.011356472525035395,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr: t_imu = t_cam + 0.0074, so t_cam = t_imu - 0.0074
+# From Kalibr: t_imu = t_cam + 0.00808501, so t_cam = t_imu - 0.00808501
 # Negated because our timestamps are IMU-based (trigger timestamps)
-Camera.TimeOffset: -0.007434667357124599
+Camera.TimeOffset: -0.00808500961981036
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0
@@ -70,7 +71,6 @@ IMU.InsertKFsWhenLost: 0
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-# Increased for more robust tracking at 640x400 resolution
 ORBextractor.nFeatures: 1500
 
 # ORB Extractor: Scale factor between levels in the scale pyramid
@@ -80,10 +80,8 @@ ORBextractor.scaleFactor: 1.2
 ORBextractor.nLevels: 8
 
 # ORB Extractor: Fast threshold
-# Lowered thresholds for better feature detection in low-texture areas
-# Lower values = more features detected but more noise
-ORBextractor.iniThFAST: 12
-ORBextractor.minThFAST: 4
+ORBextractor.iniThFAST: 8
+ORBextractor.minThFAST: 3
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters
