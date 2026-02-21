@@ -106,6 +106,7 @@ src/Frame.cc
 src/KeyFrameDatabase.cc
 src/Sim3Solver.cc
 src/Viewer.cc
+src/VideoRecorder.cc
 src/ImuTypes.cc
 src/G2oTypes.cc
 src/CameraModels/Pinhole.cpp
@@ -134,6 +135,7 @@ include/Frame.h
 include/KeyFrameDatabase.h
 include/Sim3Solver.h
 include/Viewer.h
+include/VideoRecorder.h
 include/ImuTypes.h
 include/G2oTypes.h
 include/CameraModels/GeometricCamera.h

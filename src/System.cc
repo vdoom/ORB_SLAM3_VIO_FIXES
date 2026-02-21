@@ -39,8 +39,11 @@ namespace ORB_SLAM3
 Verbose::eLevel Verbose::th = Verbose::VERBOSITY_NORMAL;
 
 System::System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor,
-               const bool bUseViewer, const int initFr, const string &strSequence):
-    mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)), mbReset(false), mbResetActiveMap(false),
+               const bool bUseViewer, const int initFr, const string &strSequence,
+               const string &strVideoOutputDir):
+    mSensor(sensor), mpViewer(static_cast<Viewer*>(NULL)),
+    mpVideoRecorder(static_cast<VideoRecorder*>(NULL)),
+    mbReset(false), mbResetActiveMap(false),
     mbActivateLocalizationMode(false), mbDeactivateLocalizationMode(false), mbShutDown(false)
 {
     // Output welcome message
@@ -234,6 +237,15 @@ System::System(const string &strVocFile, const string &strSettingsFile, const eS
         mpTracker->SetViewer(mpViewer);
         mpLoopCloser->mpViewer = mpViewer;
         mpViewer->both = mpFrameDrawer->both;
+    }
+
+    //Initialize the VideoRecorder thread and launch (headless video recording)
+    if(!strVideoOutputDir.empty())
+    {
+        mpVideoRecorder = new VideoRecorder(mpFrameDrawer, mpTracker, strSettingsFile, settings_, strVideoOutputDir);
+        mpVideoRecorder->both = mpFrameDrawer->both;
+        mptVideoRecorder = new thread(&VideoRecorder::Run, mpVideoRecorder);
+        cout << "Video recording enabled. Output: " << mpVideoRecorder->GetVideoFilePath() << endl;
     }
 
     // Fix verbosity
@@ -529,6 +541,13 @@ void System::Shutdown()
         while(!mpViewer->isFinished())
             usleep(5000);
     }*/
+
+    if(mpVideoRecorder)
+    {
+        mpVideoRecorder->RequestFinish();
+        while(!mpVideoRecorder->isFinished())
+            usleep(5000);
+    }
 
     // Wait until all thread have effectively stopped
     /*while(!mpLocalMapper->isFinished() || !mpLoopCloser->isFinished() || mpLoopCloser->isRunningGBA())
