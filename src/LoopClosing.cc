@@ -40,6 +40,10 @@ LoopClosing::LoopClosing(Atlas *pAtlas, KeyFrameDatabase *pDB, ORBVocabulary *pV
 {
     mnCovisibilityConsistencyTh = 3;
     mpLastCurrentKF = static_cast<KeyFrame*>(NULL);
+    mpLoopLastCurrentKF = static_cast<KeyFrame*>(NULL);
+    mpLoopMatchedKF = static_cast<KeyFrame*>(NULL);
+    mpMergeLastCurrentKF = static_cast<KeyFrame*>(NULL);
+    mpMergeMatchedKF = static_cast<KeyFrame*>(NULL);
 
 #ifdef REGISTER_TIMES
 
@@ -208,8 +212,10 @@ void LoopClosing::Run()
                     if(mbLoopDetected)
                     {
                         // Reset Loop variables
-                        mpLoopLastCurrentKF->SetErase();
-                        mpLoopMatchedKF->SetErase();
+                        if(mpLoopLastCurrentKF) mpLoopLastCurrentKF->SetErase();
+                        if(mpLoopMatchedKF) mpLoopMatchedKF->SetErase();
+                        mpLoopLastCurrentKF = static_cast<KeyFrame*>(NULL);
+                        mpLoopMatchedKF = static_cast<KeyFrame*>(NULL);
                         mnLoopNumCoincidences = 0;
                         mvpLoopMatchedMPs.clear();
                         mvpLoopMPs.clear();
@@ -283,8 +289,10 @@ void LoopClosing::Run()
                     }
 
                     // Reset all variables
-                    mpLoopLastCurrentKF->SetErase();
-                    mpLoopMatchedKF->SetErase();
+                    if(mpLoopLastCurrentKF) mpLoopLastCurrentKF->SetErase();
+                    if(mpLoopMatchedKF) mpLoopMatchedKF->SetErase();
+                    mpLoopLastCurrentKF = static_cast<KeyFrame*>(NULL);
+                    mpLoopMatchedKF = static_cast<KeyFrame*>(NULL);
                     mnLoopNumCoincidences = 0;
                     mvpLoopMatchedMPs.clear();
                     mvpLoopMPs.clear();
@@ -408,8 +416,10 @@ bool LoopClosing::NewDetectCommonRegions()
             mnLoopNumNotFound++;
             if(mnLoopNumNotFound >= 2)
             {
-                mpLoopLastCurrentKF->SetErase();
-                mpLoopMatchedKF->SetErase();
+                if(mpLoopLastCurrentKF) mpLoopLastCurrentKF->SetErase();
+                if(mpLoopMatchedKF) mpLoopMatchedKF->SetErase();
+                mpLoopLastCurrentKF = static_cast<KeyFrame*>(NULL);
+                mpLoopMatchedKF = static_cast<KeyFrame*>(NULL);
                 mnLoopNumCoincidences = 0;
                 mvpLoopMatchedMPs.clear();
                 mvpLoopMPs.clear();
@@ -2257,6 +2267,29 @@ void LoopClosing::ResetIfRequested()
             }
             else
                 ++it;
+        }
+
+        // If loop detection state references keyframes from the reset map, clear it to
+        // prevent stale pointer access (SetErase/SetBadFlag on KFs whose map is gone).
+        if(mpLoopMatchedKF && mpLoopMatchedKF->GetMap() == mpMapToReset)
+        {
+            mpLoopLastCurrentKF = static_cast<KeyFrame*>(NULL);
+            mpLoopMatchedKF = static_cast<KeyFrame*>(NULL);
+            mnLoopNumCoincidences = 0;
+            mvpLoopMatchedMPs.clear();
+            mvpLoopMPs.clear();
+            mnLoopNumNotFound = 0;
+            mbLoopDetected = false;
+        }
+        if(mpMergeMatchedKF && mpMergeMatchedKF->GetMap() == mpMapToReset)
+        {
+            mpMergeLastCurrentKF = static_cast<KeyFrame*>(NULL);
+            mpMergeMatchedKF = static_cast<KeyFrame*>(NULL);
+            mnMergeNumCoincidences = 0;
+            mvpMergeMatchedMPs.clear();
+            mvpMergeMPs.clear();
+            mnMergeNumNotFound = 0;
+            mbMergeDetected = false;
         }
 
         mLastLoopKFid=mpAtlas->GetLastInitKFid(); //TODO old variable, it is not use in the new algorithm
