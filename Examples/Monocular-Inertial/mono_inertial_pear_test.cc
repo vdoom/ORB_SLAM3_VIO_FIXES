@@ -153,6 +153,36 @@ int main(int argc, char** argv) {
         return 1;
     }
 
+    // Apply camera settings AFTER start() - start() reinitializes the sensor,
+    // so V4L2 control writes must come after to avoid being reset.
+    // This matches the sequence used in PearCameraApp (MainWindow.cpp).
+    camera->setTriggerMode(camConfig.triggerMode);
+    camera->setAutoExposure(camConfig.autoExposure);
+    if (!camConfig.autoExposure) {
+        camera->setGain(camConfig.gain);
+        this_thread::sleep_for(chrono::milliseconds(50));
+        camera->setExposureTime(camConfig.exposureTimeUs);
+    }
+    cout << "Camera settings applied: trigger=" << camConfig.triggerMode
+         << " gain=" << camera->gain()
+         << " exposure=" << camera->exposureTime() << "us" << endl;
+
+    // ---- Auto-tune gain if auto exposure is enabled ----
+    if (camConfig.autoExposure) {
+        cout << "Running auto gain..." << endl;
+        pearvio::AutoGainConfig agc;
+        auto result = camera->autoGain(agc);
+        if (result.success) {
+            cout << "Auto gain: " << result.gain << " (brightness=" << result.brightness
+                 << ", iterations=" << result.iterations << ")" << endl;
+            camConfig.gain = result.gain;
+            camConfig.autoExposure = false;
+            camConfig.saveToIniFile();
+        } else {
+            cout << "Auto gain failed, using current gain: " << camera->gain() << endl;
+        }
+    }
+
     // ---- Wait for first IMU data to establish time base ----
     cout << "Waiting for IMU data..." << endl;
     uint64_t firstImuTimestamp = 0;

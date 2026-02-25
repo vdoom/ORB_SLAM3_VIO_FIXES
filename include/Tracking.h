@@ -321,6 +321,7 @@ protected:
     unsigned int mnLastRelocFrameId;
     double mTimeStampLost;
     double time_recently_lost;
+    unsigned int mnConsecutiveTrackLocalMapFailures{0};
 
     unsigned int mnFirstFrameId;
     unsigned int mnInitialFrameId;
