@@ -336,6 +336,12 @@ if(PEARAPI_FOUND)
     target_compile_features(mono_inertial_pear_fake_gps PRIVATE cxx_std_17)
     target_include_directories(mono_inertial_pear_fake_gps PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(mono_inertial_pear_fake_gps ${PROJECT_NAME} PearAPI Threads::Threads)
+
+    # PearAPI test/visualization only (OV9281 + BMI160, no MAVLink)
+    add_executable(mono_inertial_pear_test
+            Examples/Monocular-Inertial/mono_inertial_pear_test.cc)
+    target_compile_features(mono_inertial_pear_test PRIVATE cxx_std_17)
+    target_link_libraries(mono_inertial_pear_test ${PROJECT_NAME} PearAPI)
 endif()
  
 #Stereo Inertial examples
