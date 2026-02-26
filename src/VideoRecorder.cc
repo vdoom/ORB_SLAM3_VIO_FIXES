@@ -78,7 +78,7 @@ string VideoRecorder::GenerateFilename(const string &outputDir)
     if(!dir.empty() && dir.back() != '/')
         dir += '/';
 
-    return dir + "VIO_" + oss.str() + ".avi";
+    return dir + "VIO_" + oss.str();
 }
 
 void VideoRecorder::Run()
@@ -90,6 +90,26 @@ void VideoRecorder::Run()
 
     cv::VideoWriter videoWriter;
     bool writerOpened = false;
+    uint64_t frameCount = 0;
+
+    cout << "VideoRecorder: waiting for tracking to start..." << endl;
+
+    // Wait until tracking has received real camera frames before recording.
+    // During dictionary loading, FrameDrawer returns a default 480x640 black frame
+    // which would cause size mismatch when real frames arrive at camera resolution.
+    while(!CheckFinish())
+    {
+        int state = mpTracker->mLastProcessedState;
+        if(state >= Tracking::NOT_INITIALIZED)
+            break;
+        usleep(100000);  // Check every 100ms
+    }
+
+    if(CheckFinish())
+    {
+        mbFinished = true;
+        return;
+    }
 
     cout << "VideoRecorder: recording to " << mVideoFilePath << " at " << fps << " fps" << endl;
 
@@ -120,21 +140,63 @@ void VideoRecorder::Run()
             cv::resize(toShow, toShow, cv::Size(width, height));
         }
 
+        // Ensure 3-channel BGR (required by video writer with isColor=true)
+        if(toShow.channels() == 1)
+            cv::cvtColor(toShow, toShow, cv::COLOR_GRAY2BGR);
+        else if(toShow.channels() == 4)
+            cv::cvtColor(toShow, toShow, cv::COLOR_BGRA2BGR);
+
+        // Ensure dimensions are even (required by most video codecs)
+        int width = toShow.cols & ~1;   // Round down to even
+        int height = toShow.rows & ~1;
+        if(width != toShow.cols || height != toShow.rows)
+            toShow = toShow(cv::Rect(0, 0, width, height)).clone();
+
+        // Ensure continuous memory layout
+        if(!toShow.isContinuous())
+            toShow = toShow.clone();
+
         if(!writerOpened)
         {
-            int fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-            videoWriter.open(mVideoFilePath, fourcc, fps,
+            cout << "VideoRecorder: first frame info: " << toShow.cols << "x" << toShow.rows
+                 << " type=" << toShow.type() << " channels=" << toShow.channels()
+                 << " depth=" << toShow.depth() << " continuous=" << toShow.isContinuous()
+                 << " step=" << toShow.step << endl;
+
+            // Try GStreamer pipeline first (most reliable on Tegra/ARM)
+            string gstPipeline = "appsrc ! videoconvert ! video/x-raw,format=I420 ! "
+                                 "x264enc tune=zerolatency bitrate=2000 ! "
+                                 "matroskamux ! filesink location=" + mVideoFilePath + ".mkv";
+            videoWriter.open(gstPipeline, cv::CAP_GSTREAMER, 0, fps,
                              cv::Size(toShow.cols, toShow.rows), true);
-            if(!videoWriter.isOpened())
+
+            if(videoWriter.isOpened())
             {
-                cerr << "VideoRecorder: ERROR - could not open video file: " << mVideoFilePath << endl;
-                break;
+                mVideoFilePath += ".mkv";
+                cout << "VideoRecorder: using GStreamer x264 pipeline" << endl;
             }
+            else
+            {
+                // Fallback to FFmpeg XVID
+                mVideoFilePath += ".avi";
+                int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+                videoWriter.open(mVideoFilePath, fourcc, fps,
+                                 cv::Size(toShow.cols, toShow.rows), true);
+                if(!videoWriter.isOpened())
+                {
+                    cerr << "VideoRecorder: ERROR - could not open video file: " << mVideoFilePath << endl;
+                    break;
+                }
+                cout << "VideoRecorder: using FFmpeg XVID" << endl;
+            }
+
             writerOpened = true;
-            cout << "VideoRecorder: video writer opened (" << toShow.cols << "x" << toShow.rows << ")" << endl;
+            cout << "VideoRecorder: recording to " << mVideoFilePath
+                 << " (" << toShow.cols << "x" << toShow.rows << ")" << endl;
         }
 
         videoWriter.write(toShow);
+        frameCount++;
 
         usleep(static_cast<useconds_t>(mT * 1000));
 
@@ -145,7 +207,8 @@ void VideoRecorder::Run()
     if(writerOpened)
     {
         videoWriter.release();
-        cout << "VideoRecorder: video saved to " << mVideoFilePath << endl;
+        cout << "VideoRecorder: video saved to " << mVideoFilePath
+             << " (" << frameCount << " frames)" << endl;
     }
 
     mbFinished = true;

@@ -194,6 +194,9 @@ public:
 
     float GetImageScale();
 
+    // Access FrameDrawer for video recording
+    FrameDrawer* GetFrameDrawer() { return mpFrameDrawer; }
+
 #ifdef REGISTER_TIMES
     void InsertRectTime(double& time);
     void InsertResizeTime(double& time);

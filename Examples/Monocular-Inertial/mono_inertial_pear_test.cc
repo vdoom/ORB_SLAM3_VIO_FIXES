@@ -10,7 +10,7 @@
  * - BMI160 IMU via Raspberry Pi Pico (hardware-triggered camera)
  *
  * Usage: ./mono_inertial_pear_test path_to_vocabulary path_to_settings
- *            [imu_serial_port] [visualization]
+ *            [imu_serial_port] [visualization] [--autogain] [--record]
  *
  *   Defaults: /dev/ttyACM0, 1 (visualization ON)
  */
@@ -28,9 +28,12 @@
 #include <iomanip>
 #include <cmath>
 #include <cstdint>
+#include <vector>
+#include <string>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
+#include <opencv2/videoio.hpp>
 
 #include <Eigen/Dense>
 
@@ -38,6 +41,7 @@
 #include <PearAPI/PearAPI.h>
 
 #include <System.h>
+#include <FrameDrawer.h>
 
 // I2C includes for OV9281 trigger mode control
 #include <fcntl.h>
@@ -64,11 +68,28 @@ void exit_loop_handler(int s) {
 //=============================================================================
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 5) {
+    // Extract flags first
+    bool enable_autogain = false;
+    bool enable_video_recording = false;
+    std::vector<std::string> positional_args;
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--autogain") {
+            enable_autogain = true;
+        } else if (arg == "--record") {
+            enable_video_recording = true;
+        } else {
+            positional_args.push_back(arg);
+        }
+    }
+
+    int pargc = positional_args.size();
+    if (pargc < 2 || pargc > 4) {
         cerr << endl
              << "Usage: ./mono_inertial_pear_test path_to_vocabulary path_to_settings"
              << endl
-             << "           [imu_serial_port] [visualization]"
+             << "           [imu_serial_port] [visualization] [--autogain] [--record]"
              << endl
              << endl
              << "  Defaults:"
@@ -76,18 +97,22 @@ int main(int argc, char** argv) {
              << "    imu_serial_port: /dev/ttyACM0"
              << endl
              << "    visualization:   1 = ON (default), 0 = OFF"
+             << endl
+             << "    --autogain:      Run auto gain tuning on startup"
+             << endl
+             << "    --record:        Record feature tracking video to current directory"
              << endl;
         return 1;
     }
 
-    string vocabularyPath = argv[1];
-    string settingsPath = argv[2];
-    string imuSerialPort = (argc >= 4) ? argv[3] : "/dev/ttyACM0";
+    string vocabularyPath = positional_args[0];
+    string settingsPath = positional_args[1];
+    string imuSerialPort = (pargc >= 3) ? positional_args[2] : "/dev/ttyACM0";
 
     // Visualization ON by default for testing
     bool enable_visualization = true;
-    if (argc >= 5) {
-        int vis_val = atoi(argv[4]);
+    if (pargc >= 4) {
+        int vis_val = atoi(positional_args[3].c_str());
         enable_visualization = (vis_val != 0);
     }
 
@@ -106,6 +131,8 @@ int main(int argc, char** argv) {
     cout << "Settings:        " << settingsPath << endl;
     cout << "IMU Port:        " << imuSerialPort << endl;
     cout << "Visualization:   " << (enable_visualization ? "ON" : "OFF") << endl;
+    cout << "Auto Gain:       " << (enable_autogain ? "ON" : "OFF") << endl;
+    cout << "Video Record:    " << (enable_video_recording ? "ON" : "OFF") << endl;
     cout << "========================================" << endl;
 
     // ---- Initialize IMU reader using PearAPI ----
@@ -167,8 +194,8 @@ int main(int argc, char** argv) {
          << " gain=" << camera->gain()
          << " exposure=" << camera->exposureTime() << "us" << endl;
 
-    // ---- Auto-tune gain if auto exposure is enabled ----
-    if (camConfig.autoExposure) {
+    // ---- Auto-tune gain if requested via --autogain flag ----
+    if (enable_autogain) {
         cout << "Running auto gain..." << endl;
         pearvio::AutoGainConfig agc;
         auto result = camera->autoGain(agc);
@@ -209,7 +236,7 @@ int main(int argc, char** argv) {
         return 0;
     }
 
-    // ---- Create SLAM system ----
+    // ---- Create SLAM system (video recording is handled directly in main loop) ----
     cout << "Creating ORB-SLAM3 system..." << endl;
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, enable_visualization);
     float imageScale = SLAM.GetImageScale();
@@ -250,6 +277,24 @@ int main(int argc, char** argv) {
 
     cout << "VIO system ready. Press Ctrl+C to exit." << endl;
     cout << "========================================" << endl;
+
+    // ---- Initialize video recorder if requested ----
+    cv::VideoWriter videoWriter;
+    uint64_t videoFrameCount = 0;
+    string videoFilePath;
+    if (enable_video_recording) {
+        // Generate timestamped filename
+        auto now = chrono::system_clock::now();
+        auto time_t_now = chrono::system_clock::to_time_t(now);
+        struct tm tm_now;
+        localtime_r(&time_t_now, &tm_now);
+        ostringstream oss;
+        oss << put_time(&tm_now, "%Y-%m-%d_%H-%M-%S");
+        videoFilePath = "VIO_" + oss.str() + ".mkv";
+
+        // VideoWriter is opened on first frame when we know the actual resolution
+        cout << "Video recording enabled, will save to: " << videoFilePath << endl;
+    }
 
     // Unit conversion constants
     constexpr float DEG_TO_RAD = 0.0174532925f;  // pi/180
@@ -441,6 +486,47 @@ int main(int argc, char** argv) {
 
         totalTrackTimeMs += trackTimeMs;
 
+        // Record annotated frame (with tracking markers) to video
+        if (enable_video_recording) {
+            cv::Mat videoFrame = SLAM.GetFrameDrawer()->DrawFrame(imageScale);
+
+            if (!videoFrame.empty()) {
+                // Ensure even dimensions
+                int vw = videoFrame.cols & ~1;
+                int vh = videoFrame.rows & ~1;
+                if (vw != videoFrame.cols || vh != videoFrame.rows)
+                    videoFrame = videoFrame(cv::Rect(0, 0, vw, vh)).clone();
+
+                if (!videoWriter.isOpened()) {
+                    string gstPipeline = "appsrc ! videoconvert ! video/x-raw,format=I420 ! "
+                                         "x264enc tune=zerolatency bitrate=2000 ! "
+                                         "matroskamux ! filesink location=" + videoFilePath;
+                    videoWriter.open(gstPipeline, cv::CAP_GSTREAMER, 0, 20.0,
+                                     cv::Size(vw, vh), true);
+                    if (videoWriter.isOpened()) {
+                        cout << "Video recording started: " << videoFilePath
+                             << " (" << vw << "x" << vh << ", GStreamer x264)" << endl;
+                    } else {
+                        videoFilePath = videoFilePath.substr(0, videoFilePath.rfind('.')) + ".avi";
+                        int fourcc = cv::VideoWriter::fourcc('X', 'V', 'I', 'D');
+                        videoWriter.open(videoFilePath, fourcc, 20.0,
+                                         cv::Size(vw, vh), true);
+                        if (videoWriter.isOpened()) {
+                            cout << "Video recording started: " << videoFilePath
+                                 << " (" << vw << "x" << vh << ", FFmpeg XVID)" << endl;
+                        } else {
+                            cerr << "WARNING: Could not open video writer, recording disabled" << endl;
+                            enable_video_recording = false;
+                        }
+                    }
+                }
+                if (videoWriter.isOpened()) {
+                    videoWriter.write(videoFrame);
+                    videoFrameCount++;
+                }
+            }
+        }
+
         // Count tracking states
         switch (tracking_state) {
             case ORB_SLAM3::Tracking::OK:
@@ -535,6 +621,12 @@ int main(int argc, char** argv) {
 
     // ---- Cleanup ----
     cout << endl << "Shutting down..." << endl;
+
+    // Close video writer
+    if (videoWriter.isOpened()) {
+        videoWriter.release();
+        cout << "Video saved: " << videoFilePath << " (" << videoFrameCount << " frames)" << endl;
+    }
 
     // Disable trigger mode before stopping camera
     camera->setTriggerMode(false);

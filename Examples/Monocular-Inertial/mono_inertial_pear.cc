@@ -13,6 +13,7 @@
  *
  * Usage: ./mono_inertial_pear path_to_vocabulary path_to_settings
  *            [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]
+ *            [--autogain]
  *
  *   Defaults: /dev/ttyACM0, /dev/ttyAMA0, 1500000, 1 (VISION_POSITION_ESTIMATE), 0 (OFF)
  */
@@ -37,6 +38,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <vector>
+#include <string>
 
 #include <opencv2/core/core.hpp>
 #include <opencv2/imgproc/imgproc.hpp>
@@ -1149,11 +1152,27 @@ private:
 //=============================================================================
 
 int main(int argc, char** argv) {
-    if (argc < 3 || argc > 8) {
+    // Extract --autogain flag first
+    bool enable_autogain = false;
+    std::vector<std::string> positional_args;
+
+    for (int i = 1; i < argc; i++) {
+        std::string arg = argv[i];
+        if (arg == "--autogain") {
+            enable_autogain = true;
+        } else {
+            positional_args.push_back(arg);
+        }
+    }
+
+    int pargc = positional_args.size();
+    if (pargc < 2 || pargc > 7) {
         cerr << endl
              << "Usage: ./mono_inertial_pear path_to_vocabulary path_to_settings"
              << endl
              << "           [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]"
+             << endl
+             << "           [--autogain]"
              << endl
              << endl
              << "  Defaults:"
@@ -1171,20 +1190,22 @@ int main(int argc, char** argv) {
              << "          2 = VISION_POSITION_ESTIMATE + VISION_SPEED_ESTIMATE"
              << endl
              << "    visualization: 0 = OFF (default), 1 = ON (Pangolin viewer)"
+             << endl
+             << "    --autogain:  Run auto gain tuning on startup"
              << endl;
         return 1;
     }
 
-    string vocabularyPath = argv[1];
-    string settingsPath = argv[2];
-    string imuSerialPort = (argc >= 4) ? argv[3] : "/dev/ttyACM0";
-    string mavlinkSerialPort = (argc >= 5) ? argv[4] : "/dev/ttyAMA0";
-    int mavlinkBaud = (argc >= 6) ? atoi(argv[5]) : 1500000;
+    string vocabularyPath = positional_args[0];
+    string settingsPath = positional_args[1];
+    string imuSerialPort = (pargc >= 3) ? positional_args[2] : "/dev/ttyACM0";
+    string mavlinkSerialPort = (pargc >= 4) ? positional_args[3] : "/dev/ttyAMA0";
+    int mavlinkBaud = (pargc >= 5) ? atoi(positional_args[4].c_str()) : 1500000;
 
     // Parse MAVLink mode
     MAVLinkMode mavlink_mode = MAVLinkMode::VISION_POSITION_ESTIMATE;
-    if (argc >= 7) {
-        int mode_val = atoi(argv[6]);
+    if (pargc >= 6) {
+        int mode_val = atoi(positional_args[5].c_str());
         if (mode_val == 0) {
             mavlink_mode = MAVLinkMode::ODOMETRY;
         } else if (mode_val == 1) {
@@ -1198,8 +1219,8 @@ int main(int argc, char** argv) {
 
     // Parse visualization option
     bool enable_visualization = false;
-    if (argc >= 8) {
-        int vis_val = atoi(argv[7]);
+    if (pargc >= 7) {
+        int vis_val = atoi(positional_args[6].c_str());
         enable_visualization = (vis_val != 0);
     }
 
@@ -1221,6 +1242,7 @@ int main(int argc, char** argv) {
     cout << "MAVLink Mode:    " << static_cast<int>(mavlink_mode)
          << " (0=ODOM, 1=VISION_POS, 2=VISION_POS+SPEED)" << endl;
     cout << "Visualization:   " << (enable_visualization ? "ON" : "OFF") << endl;
+    cout << "Auto Gain:       " << (enable_autogain ? "ON" : "OFF") << endl;
     cout << "========================================" << endl;
 
     // ---- Initialize IMU reader using PearAPI ----
@@ -1297,6 +1319,22 @@ int main(int argc, char** argv) {
          << " autoExpo=" << camConfig.autoExposure
          << " exposure=" << camera->exposureTime() << "us"
          << " gain=" << camera->gain() << endl;
+
+    // ---- Auto-tune gain if requested via --autogain flag ----
+    if (enable_autogain) {
+        cout << "Running auto gain..." << endl;
+        pearvio::AutoGainConfig agc;
+        auto result = camera->autoGain(agc);
+        if (result.success) {
+            cout << "Auto gain: " << result.gain << " (brightness=" << result.brightness
+                 << ", iterations=" << result.iterations << ")" << endl;
+            camConfig.gain = result.gain;
+            camConfig.autoExposure = false;
+            camConfig.saveToIniFile();
+        } else {
+            cout << "Auto gain failed, using current gain: " << camera->gain() << endl;
+        }
+    }
 
     // ---- Wait for first IMU data to establish time base ----
     cout << "Waiting for IMU data..." << endl;
