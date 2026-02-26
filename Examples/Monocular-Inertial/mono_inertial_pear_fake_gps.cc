@@ -17,7 +17,7 @@
  *
  * Usage: ./mono_inertial_pear_fake_gps path_to_vocabulary path_to_settings
  *            [imu_serial_port] [mavlink_serial_port] [mavlink_baud]
- *            [origin_lat origin_lon origin_alt] [--vis|--novis]
+ *            [origin_lat origin_lon origin_alt] [--vis|--novis] [--autogain]
  *
  *   Defaults: /dev/ttyACM0, /dev/ttyAMA0, 1500000, GPS origin from ArduPilot, no visualization
  *
@@ -1312,8 +1312,9 @@ int main(int argc, char** argv) {
     // Set unbuffered stdout for real-time output
     setvbuf(stdout, NULL, _IONBF, 0);
 
-    // Extract --vis/--novis flags first
+    // Extract flags first
     bool enable_visualization = false;
+    bool enable_autogain = false;
     std::vector<std::string> args;
 
     for (int i = 1; i < argc; i++) {
@@ -1322,6 +1323,8 @@ int main(int argc, char** argv) {
             enable_visualization = true;
         } else if (arg == "--novis") {
             enable_visualization = false;
+        } else if (arg == "--autogain") {
+            enable_autogain = true;
         } else {
             args.push_back(arg);
         }
@@ -1349,6 +1352,8 @@ int main(int argc, char** argv) {
              << "    GPS origin:          From ArduPilot HOME_POSITION (if not specified)"
              << endl
              << "    visualization:       OFF (use --vis to enable Pangolin viewer)"
+             << endl
+             << "    --autogain:          Run auto gain tuning on startup"
              << endl
              << endl
              << "  Examples:"
@@ -1408,6 +1413,7 @@ int main(int argc, char** argv) {
         ("CLI: " + to_string(origin_lat) + ", " + to_string(origin_lon) + ", " + to_string(origin_alt)) :
         "From ArduPilot HOME_POSITION") << endl;
     cout << "Visualization:   " << (enable_visualization ? "ON" : "OFF") << endl;
+    cout << "Auto Gain:       " << (enable_autogain ? "ON" : "OFF") << endl;
     cout << "========================================" << endl;
 
     // ---- Initialize IMU reader using PearAPI ----
@@ -1429,15 +1435,15 @@ int main(int argc, char** argv) {
 
     pearvio::CameraConfig camConfig;
     camConfig.cameraIndex = 0;
-    camConfig.width = 640;
-    camConfig.height = 400;
     camConfig.fps = 20;  // 20 FPS for triggered mode
 
-    // Load camera settings from PearCameraApp config (exposure, gain, etc.)
+    // Load camera settings from PearCameraApp config (resolution, exposure, gain, etc.)
     if (camConfig.loadFromIniFile()) {
         cout << "Loaded camera settings from config file" << endl;
+        cout << "  Resolution: " << camConfig.width << "x" << camConfig.height << endl;
     } else {
-        cout << "No config file found, using default camera settings" << endl;
+        cout << "No config file found, using defaults ("
+             << camConfig.width << "x" << camConfig.height << ")" << endl;
     }
 
     // VIO always needs trigger mode for hardware sync
@@ -1453,6 +1459,36 @@ int main(int argc, char** argv) {
     if (!camera->start()) {
         cout << "Failed to start camera" << endl;
         return 1;
+    }
+
+    // Apply camera settings AFTER start() - start() reinitializes the sensor,
+    // so V4L2 control writes must come after to avoid being reset.
+    camera->setTriggerMode(camConfig.triggerMode);
+    camera->setAutoExposure(camConfig.autoExposure);
+    if (!camConfig.autoExposure) {
+        camera->setGain(camConfig.gain);
+        std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        camera->setExposureTime(camConfig.exposureTimeUs);
+    }
+    cout << "Camera settings applied: trigger=" << camConfig.triggerMode
+         << " autoExpo=" << camConfig.autoExposure
+         << " exposure=" << camera->exposureTime() << "us"
+         << " gain=" << camera->gain() << endl;
+
+    // ---- Auto-tune gain if requested via --autogain flag ----
+    if (enable_autogain) {
+        cout << "Running auto gain..." << endl;
+        pearvio::AutoGainConfig agc;
+        auto result = camera->autoGain(agc);
+        if (result.success) {
+            cout << "Auto gain: " << result.gain << " (brightness=" << result.brightness
+                 << ", iterations=" << result.iterations << ")" << endl;
+            camConfig.gain = result.gain;
+            camConfig.autoExposure = false;
+            camConfig.saveToIniFile();
+        } else {
+            cout << "Auto gain failed, using current gain: " << camera->gain() << endl;
+        }
     }
 
     // ---- Wait for first IMU data to establish time base ----

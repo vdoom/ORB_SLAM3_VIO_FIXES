@@ -2140,7 +2140,10 @@ void Tracking::Track()
         }
 
         if(bOK)
+        {
             mState = OK;
+            mnConsecutiveTrackLocalMapFailures = 0;
+        }
         else if (mState == OK)
         {
             if (mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD)
@@ -2157,10 +2160,24 @@ void Tracking::Track()
             else
                 mState=RECENTLY_LOST; // visual to lost
 
+            mnConsecutiveTrackLocalMapFailures = 0;
             /*if(mCurrentFrame.mnId>mnLastRelocFrameId+mMaxFrames)
             {*/
                 mTimeStampLost = mCurrentFrame.mTimeStamp;
             //}
+        }
+        else if (mState == RECENTLY_LOST && !bOK)
+        {
+            mnConsecutiveTrackLocalMapFailures++;
+            // If TrackLocalMap has failed too many times in a row, force transition to LOST
+            // to trigger map reset rather than spinning in a degraded state
+            if(mnConsecutiveTrackLocalMapFailures > 60)
+            {
+                cout << "Forcing LOST state after " << mnConsecutiveTrackLocalMapFailures
+                     << " consecutive TrackLocalMap failures" << endl;
+                mState = LOST;
+                mnConsecutiveTrackLocalMapFailures = 0;
+            }
         }
 
         // Save frame if recent relocalization, since they are used for IMU reset (as we are making copy, it shluld be once mCurrFrame is completely modified)
@@ -2300,7 +2317,7 @@ void Tracking::Track()
     if(mState==OK || mState==RECENTLY_LOST)
     {
         // Store frame pose information to retrieve the complete camera trajectory afterwards.
-        if(mCurrentFrame.isSet())
+        if(mCurrentFrame.isSet() && mCurrentFrame.mpReferenceKF)
         {
             Sophus::SE3f Tcr_ = mCurrentFrame.GetPose() * mCurrentFrame.mpReferenceKF->GetPoseInverse();
             mlRelativeFramePoses.push_back(Tcr_);
@@ -2310,7 +2327,7 @@ void Tracking::Track()
         }
         else
         {
-            // This can happen if tracking is lost
+            // This can happen if tracking is lost or reference KF is null
             mlRelativeFramePoses.push_back(mlRelativeFramePoses.back());
             mlpReferences.push_back(mlpReferences.back());
             mlFrameTimes.push_back(mlFrameTimes.back());
@@ -2981,13 +2998,29 @@ bool Tracking::TrackLocalMap()
             // if(!mbMapUpdated && mState == OK) //  && (mnMatchesInliers>30))
             if(!mbMapUpdated) //  && (mnMatchesInliers>30))
             {
-                Verbose::PrintMess("TLM: PoseInertialOptimizationLastFrame ", Verbose::VERBOSITY_DEBUG);
-                inliers = Optimizer::PoseInertialOptimizationLastFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
+                if(mCurrentFrame.mpPrevFrame)
+                {
+                    Verbose::PrintMess("TLM: PoseInertialOptimizationLastFrame ", Verbose::VERBOSITY_DEBUG);
+                    inliers = Optimizer::PoseInertialOptimizationLastFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
+                }
+                else
+                {
+                    Verbose::PrintMess("TLM: PoseInertialOptimizationLastFrame fallback to PoseOptimization (null mpPrevFrame)", Verbose::VERBOSITY_DEBUG);
+                    Optimizer::PoseOptimization(&mCurrentFrame);
+                }
             }
             else
             {
-                Verbose::PrintMess("TLM: PoseInertialOptimizationLastKeyFrame ", Verbose::VERBOSITY_DEBUG);
-                inliers = Optimizer::PoseInertialOptimizationLastKeyFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
+                if(mCurrentFrame.mpLastKeyFrame)
+                {
+                    Verbose::PrintMess("TLM: PoseInertialOptimizationLastKeyFrame ", Verbose::VERBOSITY_DEBUG);
+                    inliers = Optimizer::PoseInertialOptimizationLastKeyFrame(&mCurrentFrame); // , !mpLastKeyFrame->GetMap()->GetIniertialBA1());
+                }
+                else
+                {
+                    Verbose::PrintMess("TLM: PoseInertialOptimizationLastKeyFrame fallback to PoseOptimization (null mpLastKeyFrame)", Verbose::VERBOSITY_DEBUG);
+                    Optimizer::PoseOptimization(&mCurrentFrame);
+                }
             }
         }
     }
@@ -3074,6 +3107,8 @@ bool Tracking::NeedNewKeyFrame()
 {
     if((mSensor == System::IMU_MONOCULAR || mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) && !mpAtlas->GetCurrentMap()->isImuInitialized())
     {
+        if (!mpLastKeyFrame)
+            return false;
         if (mSensor == System::IMU_MONOCULAR && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)
             return true;
         else if ((mSensor == System::IMU_STEREO || mSensor == System::IMU_RGBD) && (mCurrentFrame.mTimeStamp-mpLastKeyFrame->mTimeStamp)>=0.25)

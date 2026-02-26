@@ -4498,6 +4498,12 @@ void Optimizer::MergeInertialBA(KeyFrame* pCurrKF, KeyFrame* pMergeKF, bool *pbS
 
 int Optimizer::PoseInertialOptimizationLastKeyFrame(Frame *pFrame, bool bRecInit)
 {
+    if(!pFrame->mpLastKeyFrame)
+    {
+        Verbose::PrintMess("PoseInertialOptimizationLastKeyFrame: null mpLastKeyFrame, aborting", Verbose::VERBOSITY_NORMAL);
+        return 0;
+    }
+
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolverX::LinearSolverType * linearSolver;
 
@@ -4882,6 +4888,12 @@ int Optimizer::PoseInertialOptimizationLastKeyFrame(Frame *pFrame, bool bRecInit
 
 int Optimizer::PoseInertialOptimizationLastFrame(Frame *pFrame, bool bRecInit)
 {
+    if(!pFrame->mpPrevFrame)
+    {
+        Verbose::PrintMess("PoseInertialOptimizationLastFrame: null mpPrevFrame, aborting", Verbose::VERBOSITY_NORMAL);
+        return 0;
+    }
+
     g2o::SparseOptimizer optimizer;
     g2o::BlockSolverX::LinearSolverType * linearSolver;
 

@@ -126,7 +126,8 @@ void LocalMapping::Run()
                 if(mpAtlas->KeyFramesInMap()>2)
                 {
 
-                    if(mbInertial && mpCurrentKeyFrame->GetMap()->isImuInitialized())
+                    if(mbInertial && mpCurrentKeyFrame->GetMap()->isImuInitialized()
+                       && mpCurrentKeyFrame->mPrevKF && mpCurrentKeyFrame->mPrevKF->mPrevKF)
                     {
                         float dist = (mpCurrentKeyFrame->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->GetCameraCenter()).norm() +
                                 (mpCurrentKeyFrame->mPrevKF->mPrevKF->GetCameraCenter() - mpCurrentKeyFrame->mPrevKF->GetCameraCenter()).norm();

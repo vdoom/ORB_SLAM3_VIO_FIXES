@@ -23,20 +23,15 @@ set(CMAKE_CXX_FLAGS_RELWITHDEBINFO "${CMAKE_CXX_FLAGS_RELWITHDEBINFO} -O2 -march
 set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -O0")
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -O0")
  
-# Check C++11 or C++0x support
+# Check C++14 support (required by Pangolin's sigslot)
 include(CheckCXXCompilerFlag)
-CHECK_CXX_COMPILER_FLAG("-std=c++11" COMPILER_SUPPORTS_CXX11)
-CHECK_CXX_COMPILER_FLAG("-std=c++0x" COMPILER_SUPPORTS_CXX0X)
-if(COMPILER_SUPPORTS_CXX11)
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+CHECK_CXX_COMPILER_FLAG("-std=c++14" COMPILER_SUPPORTS_CXX14)
+if(COMPILER_SUPPORTS_CXX14)
+   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++14")
    add_definitions(-DCOMPILEDWITHC11)
-   message(STATUS "Using flag -std=c++11.")
-elseif(COMPILER_SUPPORTS_CXX0X)
-   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
-   add_definitions(-DCOMPILEDWITHC0X)
-   message(STATUS "Using flag -std=c++0x.")
+   message(STATUS "Using flag -std=c++14.")
 else()
-   message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++11 support. Please use a different C++ compiler.")
+   message(FATAL_ERROR "The compiler ${CMAKE_CXX_COMPILER} has no C++14 support. Please use a different C++ compiler.")
 endif()
  
 LIST(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake_modules)
@@ -118,6 +113,7 @@ src/Frame.cc
 src/KeyFrameDatabase.cc
 src/Sim3Solver.cc
 src/Viewer.cc
+src/VideoRecorder.cc
 src/ImuTypes.cc
 src/G2oTypes.cc
 src/CameraModels/Pinhole.cpp
@@ -146,6 +142,7 @@ include/Frame.h
 include/KeyFrameDatabase.h
 include/Sim3Solver.h
 include/Viewer.h
+include/VideoRecorder.h
 include/ImuTypes.h
 include/G2oTypes.h
 include/CameraModels/GeometricCamera.h
@@ -362,6 +359,12 @@ if(PEARAPI_FOUND)
     target_compile_features(mono_inertial_pear_fake_gps PRIVATE cxx_std_17)
     target_include_directories(mono_inertial_pear_fake_gps PRIVATE ${MAVLINK_INCLUDE_DIR})
     target_link_libraries(mono_inertial_pear_fake_gps ${PROJECT_NAME} PearAPI Threads::Threads)
+
+    # PearAPI test/visualization only (OV9281 + BMI160, no MAVLink)
+    add_executable(mono_inertial_pear_test
+            Examples/Monocular-Inertial/mono_inertial_pear_test.cc)
+    target_compile_features(mono_inertial_pear_test PRIVATE cxx_std_17)
+    target_link_libraries(mono_inertial_pear_test ${PROJECT_NAME} PearAPI)
 endif()
  
 #Stereo Inertial examples

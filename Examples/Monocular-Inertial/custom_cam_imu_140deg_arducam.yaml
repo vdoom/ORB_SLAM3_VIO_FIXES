@@ -2,22 +2,22 @@
 
 #--------------------------------------------------------------------------------------------
 # Camera Parameters. Calibrated using Kalibr with April grid.
-# Source: kalibr_data-camchain-imucam.yaml
+# Source: kalibr_data_2026-02-23_13-33-44-camchain-imucam.yaml
 # Resolution: 640x400
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
 # Camera intrinsics from Kalibr calibration (2026-02-23)
-Camera.fx: 553.124267080316
-Camera.fy: 557.7157441040492
-Camera.cx: 323.9678806316275
-Camera.cy: 193.08932125128922
+Camera.fx: 260.139841715643
+Camera.fy: 258.53761874520217
+Camera.cx: 368.6669162319716
+Camera.cy: 204.12943424603068
 
-# Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.4392840729450221
-Camera.k2: 0.190344091426536
-Camera.p1: -0.0005533761699227125
-Camera.p2: -0.0007612869242764899
+# Distortion parameters (equidistant model: k1, k2, p1, p2)
+Camera.k1: -0.014259029928017575
+Camera.k2: 0.0005802760339864387
+Camera.p1: -0.001677055802070656
+Camera.p2: 1.1553028246762438e-05
 
 # Camera resolution
 Camera.width: 640
@@ -31,7 +31,7 @@ Camera.RGB: 0
 
 #--------------------------------------------------------------------------------------------
 # IMU Parameters. From Kalibr calibration.
-# Source: kalibr_data-imu.yaml
+# Source: kalibr_data_2026-02-23_13-33-44-imu.yaml
 #--------------------------------------------------------------------------------------------
 
 # IMU noise parameters (continuous-time, from Kalibr 2026-02-23)
@@ -53,15 +53,15 @@ Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [0.04023739442437997, -0.9983598472040539, 0.04072551510581803, 0.002536839181844547,
-          -0.9991336981431637, -0.04063493338541051, -0.008980836460364704, -0.0002975748982839791,
-          0.010620985109745752, -0.040328869057544715, -0.9991300100566678, -0.040986559595629656,
+   data: [0.031037666584753883, 0.999404560679237, -0.01507273520352444, 0.006824454121720734,
+          0.9992746308329459, -0.03069366978867432, 0.022541313373097567, -0.000911044028682918,
+          0.022065253831624474, -0.015761431675001283, -0.9996322833146701, -0.0393689754983857,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr: t_imu = t_cam + 0.00766661, so t_cam = t_imu - 0.00766661
+# From Kalibr: t_imu = t_cam + 0.00692117, so t_cam = t_imu - 0.00692117
 # Negated because our timestamps are IMU-based (trigger timestamps)
-Camera.TimeOffset: -0.00766661217877531
+Camera.TimeOffset: -0.006921167910123351
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0
