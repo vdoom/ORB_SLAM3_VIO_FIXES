@@ -2,22 +2,22 @@
 
 #--------------------------------------------------------------------------------------------
 # Camera Parameters. Calibrated using Kalibr with April grid.
-# Source: kalibr_data_2026-02-26_14-06-14-camchain-imucam.yaml
+# Source: kalibr_data_2026-02-23_13-33-44-camchain-imucam.yaml
 # Resolution: 640x400
 #--------------------------------------------------------------------------------------------
 Camera.type: "PinHole"
 
-# Camera intrinsics from Kalibr calibration (2026-02-26)
-Camera.fx: 543.9053785605963
-Camera.fy: 548.773661612939
-Camera.cx: 314.16178823983694
-Camera.cy: 193.9433995158546
+# Camera intrinsics from Kalibr calibration (2026-02-23)
+Camera.fx: 260.139841715643
+Camera.fy: 258.53761874520217
+Camera.cx: 368.6669162319716
+Camera.cy: 204.12943424603068
 
-# Distortion parameters (radtan model: k1, k2, p1, p2)
-Camera.k1: -0.422007818262373
-Camera.k2: 0.16467170124907848
-Camera.p1: -0.0014792971237499516
-Camera.p2: -0.00045124357181782973
+# Distortion parameters (equidistant model: k1, k2, p1, p2)
+Camera.k1: -0.014259029928017575
+Camera.k2: 0.0005802760339864387
+Camera.p1: -0.001677055802070656
+Camera.p2: 1.1553028246762438e-05
 
 # Camera resolution
 Camera.width: 640
@@ -31,10 +31,10 @@ Camera.RGB: 0
 
 #--------------------------------------------------------------------------------------------
 # IMU Parameters. From Kalibr calibration.
-# Source: kalibr_data_2026-02-26_14-06-14-imu.yaml
+# Source: kalibr_data_2026-02-23_13-33-44-imu.yaml
 #--------------------------------------------------------------------------------------------
 
-# IMU noise parameters (continuous-time, from Kalibr 2026-02-26)
+# IMU noise parameters (continuous-time, from Kalibr 2026-02-23)
 IMU.NoiseGyro: 0.000135
 IMU.NoiseAcc: 0.00207
 IMU.GyroWalk: 3e-05
@@ -47,21 +47,21 @@ IMU.Frequency: 500
 # Camera-IMU Extrinsic Calibration (Tbc: Body/IMU to Camera transformation)
 #--------------------------------------------------------------------------------------------
 
-# T_ic = inv(T_cam_imu) from Kalibr calibration (2026-02-26)
+# T_ic = inv(T_cam_imu) from Kalibr calibration (2026-02-23)
 # Tbc = T_ic: transforms points from camera frame to IMU/body frame
 Tbc: !!opencv-matrix
    rows: 4
    cols: 4
    dt: f
-   data: [0.029617016991960878, 0.99944643398947, -0.015154467665699663, 0.007373522955875888,
-          0.9994236154263432, -0.02935788105640321, 0.01704557854740397, -0.00021394894359563876,
-          0.016591239635287584, -0.015650572053791435, -0.9997398613448172, -0.04839037104430822,
+   data: [0.031037666584753883, 0.999404560679237, -0.01507273520352444, 0.006824454121720734,
+          0.9992746308329459, -0.03069366978867432, 0.022541313373097567, -0.000911044028682918,
+          0.022065253831624474, -0.015761431675001283, -0.9996322833146701, -0.0393689754983857,
           0.0, 0.0, 0.0, 1.0]
 
 # Time offset: Time_camera = Time_imu + td (in seconds)
-# From Kalibr: t_imu = t_cam + 0.00720022, so t_cam = t_imu - 0.00720022
+# From Kalibr: t_imu = t_cam + 0.00692117, so t_cam = t_imu - 0.00692117
 # Negated because our timestamps are IMU-based (trigger timestamps)
-Camera.TimeOffset: -0.007200219227920966
+Camera.TimeOffset: -0.006921167910123351
 
 # Insert KFs when there is no visual odometry
 IMU.InsertKFsWhenLost: 0

@@ -127,15 +127,15 @@ int main(int argc, char** argv) {
 
     pearvio::CameraConfig camConfig;
     camConfig.cameraIndex = 0;
-    camConfig.width = 640;
-    camConfig.height = 400;
     camConfig.fps = 20;  // 20 FPS for triggered mode
 
-    // Load camera settings from PearCameraApp config (exposure, gain, etc.)
+    // Load camera settings from PearCameraApp config (resolution, exposure, gain, etc.)
     if (camConfig.loadFromIniFile()) {
         cout << "Loaded camera settings from config file" << endl;
+        cout << "  Resolution: " << camConfig.width << "x" << camConfig.height << endl;
     } else {
-        cout << "No config file found, using default camera settings" << endl;
+        cout << "No config file found, using defaults ("
+             << camConfig.width << "x" << camConfig.height << ")" << endl;
     }
 
     // VIO always needs trigger mode for hardware sync
