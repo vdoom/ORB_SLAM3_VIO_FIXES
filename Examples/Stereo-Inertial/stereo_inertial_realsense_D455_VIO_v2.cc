@@ -1156,19 +1156,38 @@ int main(int argc, char **argv) {
     std::cout << "ORB-SLAM3 Stereo-Inertial VIO v2 (ArduPilot Bridge)" << std::endl;
     std::cout << "==================================================" << std::endl;
 
-    if(argc < 3 || argc > 5) {
-        std::cerr << "Usage: ./stereo_inertial_realsense_D455_VIO_v2 path_to_vocabulary path_to_settings [mode] [visualization]" << std::endl;
+    // Check for --test flag anywhere in arguments
+    bool test_mode = false;
+    for (int i = 1; i < argc; i++) {
+        if (std::string(argv[i]) == "--test") {
+            test_mode = true;
+        }
+    }
+
+    if(argc < 3 || (argc > 5 && !test_mode) || (argc > 4 && test_mode)) {
+        std::cerr << "Usage:" << std::endl;
+        std::cerr << "  Normal:  ./stereo_inertial_realsense_D455_VIO_v2 path_to_vocabulary path_to_settings [mode] [visualization]" << std::endl;
+        std::cerr << "  Test:    ./stereo_inertial_realsense_D455_VIO_v2 path_to_vocabulary path_to_settings --test" << std::endl;
+        std::cerr << std::endl;
         std::cerr << "  mode: 0 = ODOMETRY" << std::endl;
         std::cerr << "        1 = VISION_POSITION_ESTIMATE (default)" << std::endl;
         std::cerr << "        2 = VISION_POSITION_ESTIMATE + VISION_SPEED_ESTIMATE" << std::endl;
         std::cerr << "  visualization: 0 = OFF (default)" << std::endl;
         std::cerr << "                 1 = ON (Pangolin viewer)" << std::endl;
+        std::cerr << std::endl;
+        std::cerr << "  --test: Run without MAVLink/flight controller, visualization ON" << std::endl;
         return 1;
     }
 
-    // Parse MAVLink mode
+    if (test_mode) {
+        std::cout << "==================================================" << std::endl;
+        std::cout << "  TEST MODE - No MAVLink, Visualization ON" << std::endl;
+        std::cout << "==================================================" << std::endl;
+    }
+
+    // Parse MAVLink mode (only relevant in normal mode)
     MAVLinkMode mavlink_mode = MAVLinkMode::VISION_POSITION_ESTIMATE;  // v2 defaults to VISION_POSITION_ESTIMATE
-    if (argc >= 4) {
+    if (!test_mode && argc >= 4) {
         int mode_val = std::atoi(argv[3]);
         if (mode_val == 0) {
             mavlink_mode = MAVLinkMode::ODOMETRY;
@@ -1180,11 +1199,13 @@ int main(int argc, char **argv) {
             std::cerr << "Invalid mode: " << mode_val << ". Using VISION_POSITION_ESTIMATE." << std::endl;
         }
     }
-    std::cout << "[Main] MAVLink mode = " << static_cast<int>(mavlink_mode) << std::endl;
+    if (!test_mode) {
+        std::cout << "[Main] MAVLink mode = " << static_cast<int>(mavlink_mode) << std::endl;
+    }
 
-    // Parse visualization option
-    bool enable_visualization = false;  // Default: OFF for headless operation
-    if (argc >= 5) {
+    // Parse visualization option (test mode forces ON)
+    bool enable_visualization = test_mode;  // Default: OFF for headless, ON for test
+    if (!test_mode && argc >= 5) {
         int vis_val = std::atoi(argv[4]);
         enable_visualization = (vis_val != 0);
     }
@@ -1194,8 +1215,11 @@ int main(int argc, char **argv) {
     std::cout << "[Main] Loading ORB-SLAM3..." << std::endl;
     ORB_SLAM3::System SLAM(argv[1], argv[2], ORB_SLAM3::System::IMU_STEREO, enable_visualization);
 
-    // Create VIO Bridge with coordinate frame bridging
-    VIOBridge vio_bridge(mavlink_mode);
+    // Create VIO Bridge only in normal mode
+    std::unique_ptr<VIOBridge> vio_bridge;
+    if (!test_mode) {
+        vio_bridge = std::make_unique<VIOBridge>(mavlink_mode);
+    }
 
     // Configure RealSense
     std::cout << "[Main] Configuring RealSense D455..." << std::endl;
@@ -1311,12 +1335,14 @@ int main(int argc, char **argv) {
     std::cout << "[Main] Starting VIO tracking with coordinate bridging..." << std::endl;
     std::cout << "[Main] Move the camera to initialize the system." << std::endl;
 
-    // Wait for MAVLink connection
-    if(!vio_bridge.waitForConnection(30)) {
-        std::cout << "[Main] MAVLink connection failed." << std::endl;
-        return 1;
+    // Wait for MAVLink connection (skip in test mode)
+    if (!test_mode) {
+        if(!vio_bridge->waitForConnection(30)) {
+            std::cout << "[Main] MAVLink connection failed." << std::endl;
+            return 1;
+        }
+        std::cout << "[Main] MAVLink connected!" << std::endl;
     }
-    std::cout << "[Main] MAVLink connected!" << std::endl;
 
     // Clear IMU vectors
     v_gyro_data.clear();
@@ -1389,7 +1415,9 @@ int main(int argc, char **argv) {
             latest_gyro = Eigen::Vector3f(vGyro.back().x, vGyro.back().y, vGyro.back().z);
             latest_accel = Eigen::Vector3f(vAccel.back().x, vAccel.back().y, vAccel.back().z);
             latest_imu_timestamp = vGyro_times.back();
-            vio_bridge.updateIMUData(latest_imu_timestamp, latest_accel, latest_gyro);
+            if (vio_bridge) {
+                vio_bridge->updateIMUData(latest_imu_timestamp, latest_accel, latest_gyro);
+            }
         }
 
         // Track with stereo-inertial
@@ -1429,14 +1457,39 @@ int main(int argc, char **argv) {
             }
         }
 
-        // Process pose through VIO Bridge (coordinate bridging happens here)
-        vio_bridge.processORBSLAMPose(Tcw, tracking_state, velocity);
+        if (test_mode) {
+            // Test mode: print VIO data to console
+            if (tracking_state == ORB_SLAM3::Tracking::OK ||
+                tracking_state == ORB_SLAM3::Tracking::OK_KLT) {
+                Sophus::SE3f Twc = Tcw.inverse();
+                Eigen::Vector3f position = Twc.translation();
+                Eigen::Quaternionf q = Twc.unit_quaternion();
 
-        // Periodic health check
-        uint32_t current_time = getCurrentTimeMs();
-        if (current_time - last_health_check > HEALTH_CHECK_INTERVAL_MS) {
-            vio_bridge.performHealthCheck();
-            last_health_check = current_time;
+                // Convert quaternion to Euler angles (roll, pitch, yaw) in degrees
+                Eigen::Matrix3f R = q.toRotationMatrix();
+                float roll  = atan2(R(2,1), R(2,2)) * 180.0f / M_PI;
+                float pitch = atan2(-R(2,0), sqrt(R(2,1)*R(2,1) + R(2,2)*R(2,2))) * 180.0f / M_PI;
+                float yaw   = atan2(R(1,0), R(0,0)) * 180.0f / M_PI;
+
+                static int print_counter = 0;
+                if (++print_counter % 10 == 0) {
+                    std::cout << "[TEST] pos=(" << std::fixed << std::setprecision(3)
+                              << position.x() << ", " << position.y() << ", " << position.z()
+                              << ") rpy=(" << std::setprecision(1) << roll << ", " << pitch << ", " << yaw
+                              << ") vel=(" << std::setprecision(2) << velocity.x() << ", " << velocity.y() << ", " << velocity.z()
+                              << ") frame=" << frame_count << std::endl;
+                }
+            }
+        } else {
+            // Normal mode: process pose through VIO Bridge (coordinate bridging happens here)
+            vio_bridge->processORBSLAMPose(Tcw, tracking_state, velocity);
+
+            // Periodic health check
+            uint32_t current_time = getCurrentTimeMs();
+            if (current_time - last_health_check > HEALTH_CHECK_INTERVAL_MS) {
+                vio_bridge->performHealthCheck();
+                last_health_check = current_time;
+            }
         }
 
         // Clear IMU measurements for next frame
