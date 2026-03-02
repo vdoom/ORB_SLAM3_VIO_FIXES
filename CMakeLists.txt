@@ -314,6 +314,12 @@ if(realsense2_FOUND)
     add_executable(mono_inertial_realsense_D435i
             Examples/Monocular-Inertial/mono_inertial_realsense_D435i.cc)
     target_link_libraries(mono_inertial_realsense_D435i ${PROJECT_NAME})
+
+    # v2: Mono-inertial VIO with coordinate frame bridging (D455 single IR + IMU)
+    add_executable(mono_inertial_realsense_D455_VIO_v2
+            Examples/Monocular-Inertial/mono_inertial_realsense_D455_VIO_v2.cc)
+    target_include_directories(mono_inertial_realsense_D455_VIO_v2 PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(mono_inertial_realsense_D455_VIO_v2 ${PROJECT_NAME} Threads::Threads)
 endif()
  
 # Custom camera with PearAPI (OV9281 + BMI160 via Pico)
