@@ -1221,6 +1221,19 @@ int main(int argc, char **argv) {
         vio_bridge = std::make_unique<VIOBridge>(mavlink_mode);
     }
 
+    // Hardware reset RealSense to ensure IMU is not stuck
+    std::cout << "[Main] Resetting RealSense D455..." << std::endl;
+    {
+        rs2::context ctx;
+        auto devices = ctx.query_devices();
+        if (devices.size() == 0) {
+            std::cerr << "[Main] No RealSense device found!" << std::endl;
+            return 1;
+        }
+        devices[0].hardware_reset();
+        std::this_thread::sleep_for(std::chrono::seconds(3));
+    }
+
     // Configure RealSense
     std::cout << "[Main] Configuring RealSense D455..." << std::endl;
     rs2::pipeline pipe;
@@ -1228,8 +1241,8 @@ int main(int argc, char **argv) {
 
     cfg.enable_stream(RS2_STREAM_INFRARED, 1, 640, 480, RS2_FORMAT_Y8, 30);
     cfg.enable_stream(RS2_STREAM_INFRARED, 2, 640, 480, RS2_FORMAT_Y8, 30);
-    cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F);
-    cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F);
+    cfg.enable_stream(RS2_STREAM_ACCEL, RS2_FORMAT_MOTION_XYZ32F, 250);
+    cfg.enable_stream(RS2_STREAM_GYRO, RS2_FORMAT_MOTION_XYZ32F, 400);
 
     // IMU callback variables
     std::mutex imu_mutex;

@@ -38,7 +38,7 @@ Camera.RGB: 0
 IMU.NoiseGyro: 0.000135
 IMU.NoiseAcc: 0.00207
 IMU.GyroWalk: 3e-05
-IMU.AccWalk: 0.0003
+IMU.AccWalk: 0.003 #IMU.AccWalk: 0.0003
 
 # IMU sampling frequency
 IMU.Frequency: 500
