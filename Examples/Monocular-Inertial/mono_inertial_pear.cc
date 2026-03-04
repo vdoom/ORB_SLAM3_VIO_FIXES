@@ -1363,10 +1363,23 @@ int main(int argc, char** argv) {
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_MONOCULAR, enable_visualization);
     float imageScale = SLAM.GetImageScale();
 
-    // Calculate half exposure time for frame timestamp offset
+    // Half exposure time offset
     double halfExposureTimeSec = camera->exposureTime() / 2.0 / 1e6;
     cout << "Exposure time: " << camera->exposureTime() << " us" << endl;
     cout << "Half exposure time offset: " << halfExposureTimeSec * 1000.0 << " ms" << endl;
+
+    // Read Camera.TimeOffset from Kalibr calibration (camera-IMU time offset)
+    double cameraTimeOffset = 0.0;
+    {
+        cv::FileStorage fSettings(settingsPath, cv::FileStorage::READ);
+        cv::FileNode node = fSettings["Camera.TimeOffset"];
+        if (!node.empty()) {
+            cameraTimeOffset = static_cast<double>(node);
+            cout << "Camera.TimeOffset from Kalibr: " << cameraTimeOffset * 1000.0 << " ms" << endl;
+        }
+        fSettings.release();
+    }
+    cout << "Total frame time offset: " << (halfExposureTimeSec + cameraTimeOffset) * 1000.0 << " ms" << endl;
 
     // Clear IMU buffer accumulated during SLAM initialization (loading vocabulary takes time)
     cout << "Clearing IMU buffer accumulated during initialization..." << endl;
@@ -1508,7 +1521,7 @@ int main(int argc, char** argv) {
         // Determine frame time
         double frameTime;
         if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            frameTime = (triggerTimestamp - firstImuTimestamp) / 1000.0 + halfExposureTimeSec;
+            frameTime = ((triggerTimestamp - firstImuTimestamp) / 1000.0) + halfExposureTimeSec + cameraTimeOffset;
         } else {
             if (!vImuMeas.empty()) {
                 frameTime = vImuMeas.back().t;

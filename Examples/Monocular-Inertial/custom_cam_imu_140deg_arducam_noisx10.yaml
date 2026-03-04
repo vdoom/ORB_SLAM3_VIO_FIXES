@@ -35,10 +35,10 @@ Camera.RGB: 0
 #--------------------------------------------------------------------------------------------
 
 # IMU noise parameters (continuous-time, from Kalibr 2026-03-04)
-IMU.NoiseGyro: 1.1544e-03
-IMU.NoiseAcc: 1.2624e-02
-IMU.GyroWalk: 2.1108e-05
-IMU.AccWalk: 2.1607e-04
+IMU.NoiseGyro: 1.1544e-02
+IMU.NoiseAcc: 1.2624e-01
+IMU.GyroWalk: 2.1108e-04
+IMU.AccWalk: 2.1607e-03
 
 # IMU sampling frequency
 IMU.Frequency: 500
@@ -61,6 +61,7 @@ Tbc: !!opencv-matrix
 # Time offset: Time_camera = Time_imu + td (in seconds)
 # From Kalibr: t_imu = t_cam + 0.00866895, so t_cam = t_imu - 0.00866895
 # Negated because our timestamps are IMU-based (trigger timestamps)
+#Camera.TimeOffset: 0.0
 Camera.TimeOffset: -0.008668951983003046
 
 # Insert KFs when there is no visual odometry
