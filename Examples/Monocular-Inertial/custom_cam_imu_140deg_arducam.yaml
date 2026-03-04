@@ -71,13 +71,13 @@ IMU.InsertKFsWhenLost: 0
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 1500
+ORBextractor.nFeatures: 1000
 
 # ORB Extractor: Scale factor between levels in the scale pyramid
 ORBextractor.scaleFactor: 1.2
 
 # ORB Extractor: Number of levels in the scale pyramid
-ORBextractor.nLevels: 8
+ORBextractor.nLevels: 6
 
 # ORB Extractor: Fast threshold
 ORBextractor.iniThFAST: 8
