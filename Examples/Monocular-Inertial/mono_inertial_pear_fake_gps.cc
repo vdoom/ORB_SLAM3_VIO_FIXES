@@ -1148,16 +1148,16 @@ private:
     }
 
     /**
-     * Transform VIO position to NED frame (camera frame to NED)
+     * Transform VIO position to NED frame
      * ORB-SLAM3 mono-inertial world frame (after gravity alignment):
-     *   X: left, Y: down (gravity), Z: backward
-     * NED: X-north, Y-east, Z-down
+     *   X: right, Y: forward, Z: up (gravity = -Z)
+     * NED: X-north/forward, Y-east/right, Z-down
      */
     Eigen::Vector3d transformVIOtoNED(const Eigen::Vector3d& vio_position) {
         return Eigen::Vector3d(
-            -vio_position.z(),  // -Z -> X (negate backward -> north/forward)
-            -vio_position.x(),  // -X -> Y (negate left -> east/right)
-            vio_position.y()    //  Y -> Z (down -> down)
+            vio_position.y(),   //  Y -> X (forward -> north)
+            vio_position.x(),   //  X -> Y (right -> east)
+            -vio_position.z()   // -Z -> Z (negate up -> down)
         );
     }
 
@@ -1177,9 +1177,9 @@ private:
      */
     Eigen::Vector3d applyVelocityTransform(const Eigen::Vector3d& vio_velocity) {
         return Eigen::Vector3d(
-            -vio_velocity.z(),  // -Z -> X (negate backward -> north/forward)
-            -vio_velocity.x(),  // -X -> Y (negate left -> east/right)
-            vio_velocity.y()    //  Y -> Z (down -> down)
+            vio_velocity.y(),   //  Y -> X (forward -> north)
+            vio_velocity.x(),   //  X -> Y (right -> east)
+            -vio_velocity.z()   // -Z -> Z (negate up -> down)
         );
     }
 
