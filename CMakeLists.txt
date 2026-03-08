@@ -426,7 +426,22 @@ target_link_libraries(uart_transfer_lib PRIVATE Threads::Threads)
             Examples/Stereo-Inertial/calibrate_d455_imu.cc)
     target_link_libraries(calibrate_d455_imu ${PROJECT_NAME})
 endif()
- 
+
+# PearAPI + MAVLink Stereo VIOBridge (2x OV9281 + IMU + ArduPilot)
+if(PEARAPI_FOUND)
+    set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Stereo-Inertial)
+    add_executable(stereo_inertial_pear
+            Examples/Stereo-Inertial/stereo_inertial_pear.cc)
+    target_compile_features(stereo_inertial_pear PRIVATE cxx_std_17)
+    target_include_directories(stereo_inertial_pear PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_pear ${PROJECT_NAME} PearAPI Threads::Threads)
+    # Copy pear_cam_server next to the executable so ShmCameraLauncher can find it
+    add_custom_command(TARGET stereo_inertial_pear POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_FILE:pear_cam_server>
+            ${PROJECT_SOURCE_DIR}/Examples/Stereo-Inertial/pear_cam_server)
+endif()
+
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Calibration)
 if(realsense2_FOUND)
     add_executable(recorder_realsense_D435i
