@@ -1360,6 +1360,22 @@ Eigen::Vector3f System::GetVelocity()
     return mpTracker->mCurrentFrame.GetVelocity();
 }
 
+void System::PushVIOEvent(VIOEvent event)
+{
+    unique_lock<mutex> lock(mMutexVIOEvent);
+    mVIOEventQueue.push(event);
+}
+
+bool System::PopVIOEvent(VIOEvent& event)
+{
+    unique_lock<mutex> lock(mMutexVIOEvent);
+    if (mVIOEventQueue.empty())
+        return false;
+    event = mVIOEventQueue.front();
+    mVIOEventQueue.pop();
+    return true;
+}
+
 double System::GetTimeFromIMUInit()
 {
     double aux = mpLocalMapper->GetCurrKFTime()-mpLocalMapper->mFirstTs;

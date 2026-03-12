@@ -26,6 +26,7 @@
 #include<stdlib.h>
 #include<string>
 #include<thread>
+#include<queue>
 #include<opencv2/core/core.hpp>
 
 #include "Tracking.h"
@@ -99,6 +100,15 @@ public:
     enum FileType{
         TEXT_FILE=0,
         BINARY_FILE=1,
+    };
+
+    // VIO lifecycle events (pushed from internal threads, polled by application)
+    enum class VIOEvent {
+        IMU_INITIALIZED,
+        VIBA1_START,
+        VIBA1_END,
+        VIBA2_START,
+        VIBA2_END
     };
 
 public:
@@ -194,6 +204,10 @@ public:
 
     float GetImageScale();
 
+    // VIO event queue for status reporting (thread-safe)
+    void PushVIOEvent(VIOEvent event);
+    bool PopVIOEvent(VIOEvent& event);
+
     // Access FrameDrawer for video recording
     FrameDrawer* GetFrameDrawer() { return mpFrameDrawer; }
 
@@ -263,6 +277,10 @@ private:
 
     // Shutdown flag
     bool mbShutDown;
+
+    // VIO event queue
+    std::queue<VIOEvent> mVIOEventQueue;
+    std::mutex mMutexVIOEvent;
 
     // Tracking state
     int mTrackingState;
