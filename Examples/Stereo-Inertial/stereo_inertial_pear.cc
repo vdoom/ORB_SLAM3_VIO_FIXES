@@ -397,6 +397,52 @@ public:
         return age < timeout_ms;
     }
 
+    // Send STATUSTEXT message to GCS/ArduPilot
+    void sendStatusText(uint8_t severity, const char* text) {
+        mavlink_message_t msg;
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+        // STATUSTEXT text field is 50 chars max (null-terminated)
+        char status_text[50];
+        memset(status_text, 0, sizeof(status_text));
+        strncpy(status_text, text, sizeof(status_text) - 1);
+
+        mavlink_msg_statustext_pack(system_id, component_id, &msg,
+                                    severity, status_text, 0, 0);
+
+        uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        ssize_t sent = write(serial_fd, buf, len);
+
+        if (sent < 0) {
+            std::cerr << "[MAVLink] Failed to send STATUSTEXT: " << strerror(errno) << std::endl;
+        }
+    }
+
+    // Send NAMED_VALUE_INT for programmatic status reporting
+    void sendNamedValueInt(const char* name, int32_t value) {
+        mavlink_message_t msg;
+        uint8_t buf[MAVLINK_MAX_PACKET_LEN];
+
+        // Name field is 10 chars max (null-terminated)
+        char field_name[10];
+        memset(field_name, 0, sizeof(field_name));
+        strncpy(field_name, name, sizeof(field_name) - 1);
+
+        auto now = std::chrono::steady_clock::now();
+        uint32_t time_boot_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+            now.time_since_epoch()).count();
+
+        mavlink_msg_named_value_int_pack(system_id, component_id, &msg,
+                                         time_boot_ms, field_name, value);
+
+        uint16_t len = mavlink_msg_to_send_buffer(buf, &msg);
+        ssize_t sent = write(serial_fd, buf, len);
+
+        if (sent < 0) {
+            std::cerr << "[MAVLink] Failed to send NAMED_VALUE_INT: " << strerror(errno) << std::endl;
+        }
+    }
+
 private:
     void run() {
         requestDataStream();
@@ -637,6 +683,139 @@ private:
 };
 
 //=============================================================================
+// VIO Status Codes (generic, backend-agnostic — reusable for OpenVINS)
+//=============================================================================
+
+namespace VIOStatus {
+    constexpr int LOADING           = 1;
+    constexpr int STARTED           = 2;
+    constexpr int IMU_INITIALIZED   = 3;
+    constexpr int VIBA1_START       = 4;
+    constexpr int VIBA1_COMPLETE    = 5;
+    constexpr int VIBA2_START       = 6;
+    constexpr int VIBA2_COMPLETE    = 7;
+    constexpr int TRACKING_LOST_BRIEF  = 8;
+    constexpr int TRACKING_LOST_FULL   = 9;
+    constexpr int CRASHED           = 10;
+}
+
+//=============================================================================
+// VIO Status Reporter (backend-agnostic — reusable for OpenVINS)
+//=============================================================================
+
+class VIOStatusReporter {
+private:
+    std::shared_ptr<MAVLinkInterface> mavlink;
+    int last_status_code;
+    int last_tracking_state;
+    bool tracking_loss_reported;  // avoid repeated RECENTLY_LOST messages
+
+    static constexpr const char* NAMED_VALUE_NAME = "VIO_STAT";
+
+public:
+    VIOStatusReporter(std::shared_ptr<MAVLinkInterface> mav)
+        : mavlink(mav)
+        , last_status_code(0)
+        , last_tracking_state(-1)
+        , tracking_loss_reported(false) {}
+
+    // Report a VIO status event (sends both STATUSTEXT and NAMED_VALUE_INT)
+    void report(int code, uint8_t severity, const char* text) {
+        if (!mavlink || !mavlink->isConnected()) {
+            // Queue for later? For now just log locally
+            std::cout << "[VIOStatus] (not connected) " << text << std::endl;
+            return;
+        }
+
+        mavlink->sendStatusText(severity, text);
+        mavlink->sendNamedValueInt(NAMED_VALUE_NAME, code);
+        last_status_code = code;
+
+        std::cout << "[VIOStatus] Sent: " << text << " (code=" << code << ")" << std::endl;
+    }
+
+    // Process ORB-SLAM3 VIO events from the event queue
+    void processORBSLAM3Event(ORB_SLAM3::System::VIOEvent event) {
+        switch (event) {
+            case ORB_SLAM3::System::VIOEvent::IMU_INITIALIZED:
+                report(VIOStatus::IMU_INITIALIZED, MAV_SEVERITY_NOTICE, "VIO: IMU initialized");
+                break;
+            case ORB_SLAM3::System::VIOEvent::VIBA1_START:
+                report(VIOStatus::VIBA1_START, MAV_SEVERITY_NOTICE, "VIO: VIBA1 started");
+                break;
+            case ORB_SLAM3::System::VIOEvent::VIBA1_END:
+                report(VIOStatus::VIBA1_COMPLETE, MAV_SEVERITY_NOTICE, "VIO: VIBA1 complete");
+                break;
+            case ORB_SLAM3::System::VIOEvent::VIBA2_START:
+                report(VIOStatus::VIBA2_START, MAV_SEVERITY_NOTICE, "VIO: VIBA2 started");
+                break;
+            case ORB_SLAM3::System::VIOEvent::VIBA2_END:
+                report(VIOStatus::VIBA2_COMPLETE, MAV_SEVERITY_NOTICE, "VIO: VIBA2 complete");
+                break;
+        }
+    }
+
+    // Track tracking state transitions and report relevant changes
+    void processTrackingState(int tracking_state) {
+        if (tracking_state == last_tracking_state)
+            return;
+
+        int prev = last_tracking_state;
+        last_tracking_state = tracking_state;
+
+        // OK/OK_KLT → RECENTLY_LOST
+        if ((prev == ORB_SLAM3::Tracking::OK || prev == ORB_SLAM3::Tracking::OK_KLT) &&
+            tracking_state == ORB_SLAM3::Tracking::RECENTLY_LOST) {
+            if (!tracking_loss_reported) {
+                report(VIOStatus::TRACKING_LOST_BRIEF, MAV_SEVERITY_WARNING, "VIO: Tracking lost briefly");
+                tracking_loss_reported = true;
+            }
+        }
+        // Any state → LOST (complete tracking loss, system will restart with new map)
+        else if (tracking_state == ORB_SLAM3::Tracking::LOST) {
+            report(VIOStatus::TRACKING_LOST_FULL, MAV_SEVERITY_ERROR, "VIO: Tracking lost, restarting");
+            tracking_loss_reported = false;
+        }
+        // Recovery: RECENTLY_LOST/LOST → OK
+        else if ((prev == ORB_SLAM3::Tracking::RECENTLY_LOST || prev == ORB_SLAM3::Tracking::LOST) &&
+                 (tracking_state == ORB_SLAM3::Tracking::OK || tracking_state == ORB_SLAM3::Tracking::OK_KLT)) {
+            tracking_loss_reported = false;
+        }
+    }
+
+    int getLastStatusCode() const { return last_status_code; }
+};
+
+//=============================================================================
+// Crash handler global (for signal handler access to MAVLink)
+//=============================================================================
+
+MAVLinkInterface* g_mavlink_for_crash = nullptr;
+
+void crash_handler(int sig) {
+    const char* sig_name = (sig == SIGSEGV) ? "SIGSEGV" :
+                           (sig == SIGABRT) ? "SIGABRT" :
+                           (sig == SIGFPE)  ? "SIGFPE"  : "UNKNOWN";
+
+    // Write to stderr (async-signal-safe via write())
+    const char crash_msg[] = "\n[VIO] CRASH detected: ";
+    write(STDERR_FILENO, crash_msg, sizeof(crash_msg) - 1);
+    write(STDERR_FILENO, sig_name, strlen(sig_name));
+    write(STDERR_FILENO, "\n", 1);
+
+    // Try to send crash notification via MAVLink (best-effort, not async-signal-safe)
+    if (g_mavlink_for_crash) {
+        g_mavlink_for_crash->sendStatusText(MAV_SEVERITY_CRITICAL, "VIO: Crashed");
+        g_mavlink_for_crash->sendNamedValueInt("VIO_STAT", 10);
+        usleep(10000);  // 10ms to allow serial buffer to flush
+    }
+
+    // Re-raise signal with default handler
+    signal(sig, SIG_DFL);
+    raise(sig);
+}
+
+//=============================================================================
 // VIO Bridge State Structure
 //=============================================================================
 
@@ -763,6 +942,9 @@ public:
         }
         return true;
     }
+
+    // Get MAVLink interface for VIOStatusReporter and crash handler
+    std::shared_ptr<MAVLinkInterface> getMavlink() const { return mavlink; }
 
     void updateIMUData(double timestamp, const Eigen::Vector3f& accel, const Eigen::Vector3f& gyro) {
         latest_imu.timestamp = timestamp;
@@ -1243,6 +1425,11 @@ int main(int argc, char** argv) {
     sigIntHandler.sa_flags = 0;
     sigaction(SIGINT, &sigIntHandler, NULL);
 
+    // Crash handlers (SIGSEGV, SIGABRT, SIGFPE) — send crash status via MAVLink
+    signal(SIGSEGV, crash_handler);
+    signal(SIGABRT, crash_handler);
+    signal(SIGFPE, crash_handler);
+
     cout << "========================================" << endl;
     cout << "Stereo-Inertial VIO (PearAPI + MAVLink)" << endl;
     cout << "========================================" << endl;
@@ -1459,9 +1646,30 @@ int main(int argc, char** argv) {
         return 0;
     }
 
+    // ---- Create VIO Bridge for MAVLink/ArduPilot integration (early, for status reporting) ----
+    std::unique_ptr<VIOBridge> vio_bridge;
+    std::unique_ptr<VIOStatusReporter> vio_status;
+    if (!test_mode) {
+        vio_bridge = std::make_unique<VIOBridge>(mavlinkSerialPort, mavlinkBaud, mavlink_mode);
+        g_mavlink_for_crash = vio_bridge->getMavlink().get();
+
+        // Wait for MAVLink connection (non-fatal timeout)
+        if (!vio_bridge->waitForConnection(30)) {
+            cout << "[Main] MAVLink connection timeout - continuing without ArduPilot." << endl;
+            cout << "[Main] MAVLink will auto-connect when ArduPilot becomes available." << endl;
+        } else {
+            cout << "[Main] MAVLink connected!" << endl;
+        }
+
+        // Create VIO status reporter
+        vio_status = std::make_unique<VIOStatusReporter>(vio_bridge->getMavlink());
+    }
+
     // ---- Create SLAM system ----
     cout << "Creating ORB-SLAM3 system (stereo-inertial)..." << endl;
+    if (vio_status) vio_status->report(VIOStatus::LOADING, MAV_SEVERITY_INFO, "VIO: Loading dictionary");
     ORB_SLAM3::System SLAM(vocabularyPath, settingsPath, ORB_SLAM3::System::IMU_STEREO, enable_visualization);
+    if (vio_status) vio_status->report(VIOStatus::STARTED, MAV_SEVERITY_INFO, "VIO: System started");
     float imageScale = SLAM.GetImageScale();
 
     // Half exposure time offset
@@ -1511,20 +1719,6 @@ int main(int argc, char** argv) {
     imuReader.clearTriggerQueue();
     imuReader.getIMUData();  // Discard any remaining IMU data
 
-    // ---- Create VIO Bridge for MAVLink/ArduPilot integration ----
-    std::unique_ptr<VIOBridge> vio_bridge;
-    if (!test_mode) {
-        vio_bridge = std::make_unique<VIOBridge>(mavlinkSerialPort, mavlinkBaud, mavlink_mode);
-
-        // Wait for MAVLink connection (non-fatal timeout)
-        if (!vio_bridge->waitForConnection(30)) {
-            cout << "[Main] MAVLink connection timeout - continuing without ArduPilot." << endl;
-            cout << "[Main] MAVLink will auto-connect when ArduPilot becomes available." << endl;
-        } else {
-            cout << "[Main] MAVLink connected!" << endl;
-        }
-    }
-
     cout << "VIO system ready. Press Ctrl+C to exit." << endl;
     cout << "========================================" << endl;
 
@@ -1549,6 +1743,7 @@ int main(int argc, char** argv) {
     const uint32_t HEALTH_CHECK_INTERVAL_MS = 5000;
 
     // ---- Main loop ----
+    try {
     while (!SLAM.isShutDown() && b_continue_session) {
         // Wait for synchronized stereo pair
         cv::Mat left, right;
@@ -1753,6 +1948,17 @@ int main(int argc, char** argv) {
             vio_bridge->processORBSLAMPose(Tcw, tracking_state, velocity);
         }
 
+        // Poll ORB-SLAM3 VIO events (VIBA1/2 start/end, IMU init) and report via MAVLink
+        if (vio_status) {
+            ORB_SLAM3::System::VIOEvent vio_event;
+            while (SLAM.PopVIOEvent(vio_event)) {
+                vio_status->processORBSLAM3Event(vio_event);
+            }
+
+            // Report tracking state transitions via MAVLink
+            vio_status->processTrackingState(tracking_state);
+        }
+
         frameCount++;
 
         // Periodic health check
@@ -1819,6 +2025,15 @@ int main(int argc, char** argv) {
                  << endl;
         }
     }
+    } catch (const std::exception& e) {
+        cerr << "[VIO] EXCEPTION in main loop: " << e.what() << endl;
+        if (vio_status) vio_status->report(VIOStatus::CRASHED, MAV_SEVERITY_CRITICAL, "VIO: Crashed");
+        usleep(10000);  // 10ms to allow serial buffer to flush
+    } catch (...) {
+        cerr << "[VIO] UNKNOWN EXCEPTION in main loop" << endl;
+        if (vio_status) vio_status->report(VIOStatus::CRASHED, MAV_SEVERITY_CRITICAL, "VIO: Crashed");
+        usleep(10000);
+    }
 
     // ---- Cleanup ----
     cout << endl << "Shutting down..." << endl;
@@ -1860,6 +2075,9 @@ int main(int argc, char** argv) {
     SLAM.SaveTrajectoryTUM("CameraTrajectory.txt");
     SLAM.SaveKeyFrameTrajectoryTUM("KeyFrameTrajectory.txt");
     cout << "Trajectories saved to CameraTrajectory.txt and KeyFrameTrajectory.txt" << endl;
+
+    // Clear crash handler before destroying MAVLink
+    g_mavlink_for_crash = nullptr;
 
     return 0;
 }
