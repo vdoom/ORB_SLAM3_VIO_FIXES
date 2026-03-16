@@ -192,6 +192,9 @@ void LocalMapping::Run()
                         InitializeIMU(1e2, 1e10, true);
                     else
                         InitializeIMU(1e2, 1e5, true);
+
+                    if(mpCurrentKeyFrame->GetMap()->isImuInitialized())
+                        mpSystem->PushVIOEvent(System::VIOEvent::IMU_INITIALIZED);
                 }
 
 
@@ -213,6 +216,7 @@ void LocalMapping::Run()
                             if (mTinit>5.0f)
                             {
                                 cout << "start VIBA 1" << endl;
+                                mpSystem->PushVIOEvent(System::VIOEvent::VIBA1_START);
                                 mpCurrentKeyFrame->GetMap()->SetIniertialBA1();
                                 if (mbMonocular)
                                     InitializeIMU(1.f, 1e5, true);
@@ -220,11 +224,13 @@ void LocalMapping::Run()
                                     InitializeIMU(1.f, 1e5, true);
 
                                 cout << "end VIBA 1" << endl;
+                                mpSystem->PushVIOEvent(System::VIOEvent::VIBA1_END);
                             }
                         }
                         else if(!mpCurrentKeyFrame->GetMap()->GetIniertialBA2()){
                             if (mTinit>15.0f){
                                 cout << "start VIBA 2" << endl;
+                                mpSystem->PushVIOEvent(System::VIOEvent::VIBA2_START);
                                 mpCurrentKeyFrame->GetMap()->SetIniertialBA2();
                                 if (mbMonocular)
                                     InitializeIMU(0.f, 0.f, true);
@@ -232,6 +238,7 @@ void LocalMapping::Run()
                                     InitializeIMU(0.f, 0.f, true);
 
                                 cout << "end VIBA 2" << endl;
+                                mpSystem->PushVIOEvent(System::VIOEvent::VIBA2_END);
                             }
                         }
 
