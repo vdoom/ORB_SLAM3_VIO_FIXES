@@ -13,7 +13,7 @@
  *
  * Usage: ./mono_inertial_pear path_to_vocabulary path_to_settings
  *            [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]
- *            [--autogain]
+ *            [--autogain] [--autogain-on-lost]
  *
  *   Defaults: /dev/ttyACM0, /dev/ttyAMA0, 1500000, 1 (VISION_POSITION_ESTIMATE), 0 (OFF)
  */
@@ -1309,14 +1309,18 @@ private:
 //=============================================================================
 
 int main(int argc, char** argv) {
-    // Extract --autogain flag first
+    // Extract flags first
     bool enable_autogain = false;
+    bool enable_autogain_on_lost = false;
     std::vector<std::string> positional_args;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
         if (arg == "--autogain") {
             enable_autogain = true;
+        } else if (arg == "--autogain-on-lost") {
+            enable_autogain_on_lost = true;
+            enable_autogain = true;  // implies --autogain for initial tuning
         } else {
             positional_args.push_back(arg);
         }
@@ -1329,7 +1333,7 @@ int main(int argc, char** argv) {
              << endl
              << "           [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]"
              << endl
-             << "           [--autogain]"
+             << "           [--autogain] [--autogain-on-lost]"
              << endl
              << endl
              << "  Defaults:"
@@ -1348,7 +1352,9 @@ int main(int argc, char** argv) {
              << endl
              << "    visualization: 0 = OFF (default), 1 = ON (Pangolin viewer)"
              << endl
-             << "    --autogain:  Run auto gain tuning on startup"
+             << "    --autogain:          Run auto gain tuning on startup"
+             << endl
+             << "    --autogain-on-lost:  Re-tune gain each time tracking is lost (implies --autogain)"
              << endl;
         return 1;
     }
@@ -1405,6 +1411,7 @@ int main(int argc, char** argv) {
          << " (0=ODOM, 1=VISION_POS, 2=VISION_POS+SPEED)" << endl;
     cout << "Visualization:   " << (enable_visualization ? "ON" : "OFF") << endl;
     cout << "Auto Gain:       " << (enable_autogain ? "ON" : "OFF") << endl;
+    cout << "AG on Lost:      " << (enable_autogain_on_lost ? "ON" : "OFF") << endl;
     cout << "========================================" << endl;
 
     // ---- Initialize MAVLink interface early (for status reporting during SLAM init) ----
@@ -1768,6 +1775,30 @@ int main(int argc, char** argv) {
         // Get velocity and tracking state from ORB-SLAM3
         Eigen::Vector3f velocity = SLAM.GetVelocity();
         auto tracking_state = SLAM.GetTrackingState();
+
+        // Re-tune gain when tracking starts failing (RECENTLY_LOST)
+        // Done here rather than on LOST, because LOST triggers re-init
+        // and auto gain delay would interfere with new feature detection
+        {
+            static int prev_state_for_autogain = -1;
+            if (enable_autogain_on_lost &&
+                tracking_state == ORB_SLAM3::Tracking::RECENTLY_LOST &&
+                prev_state_for_autogain != ORB_SLAM3::Tracking::RECENTLY_LOST) {
+                cout << "Tracking lost - re-tuning gain..." << endl;
+                pearvio::AutoGainConfig agc;
+                auto result = camera->autoGain(agc);
+                if (result.success) {
+                    cout << "Auto gain (on lost): " << result.gain << " (brightness=" << result.brightness
+                         << ", iterations=" << result.iterations << ")" << endl;
+                    camConfig.gain = result.gain;
+                    camConfig.autoExposure = false;
+                    camConfig.saveToIniFile();
+                } else {
+                    cout << "Auto gain (on lost) failed, keeping gain: " << camera->gain() << endl;
+                }
+            }
+            prev_state_for_autogain = tracking_state;
+        }
 
         // Update VIOBridge with latest IMU data (SI units: rad/s, m/s^2)
         if (!imuData.empty()) {
