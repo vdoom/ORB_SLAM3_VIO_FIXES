@@ -440,6 +440,13 @@ if(PEARAPI_FOUND)
         COMMAND ${CMAKE_COMMAND} -E copy_if_different
             $<TARGET_FILE:pear_cam_server>
             ${PROJECT_SOURCE_DIR}/Examples/Stereo-Inertial/pear_cam_server)
+
+    # PearAPI + MAVLink Stereo VIOBridge - Direct Stereo mode (in-process, rawCapture)
+    add_executable(stereo_inertial_pear_direct
+            Examples/Stereo-Inertial/stereo_inertial_pear_direct.cc)
+    target_compile_features(stereo_inertial_pear_direct PRIVATE cxx_std_17)
+    target_include_directories(stereo_inertial_pear_direct PRIVATE ${MAVLINK_INCLUDE_DIR})
+    target_link_libraries(stereo_inertial_pear_direct ${PROJECT_NAME} PearAPI Threads::Threads)
 endif()
 
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${PROJECT_SOURCE_DIR}/Examples/Calibration)
