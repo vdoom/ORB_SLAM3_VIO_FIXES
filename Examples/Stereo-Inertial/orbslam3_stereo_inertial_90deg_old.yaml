@@ -113,7 +113,7 @@ Camera.TimeOffset: 0.008069473553086222
 #--------------------------------------------------------------------------------------------
 
 # ORB Extractor: Number of features per image
-ORBextractor.nFeatures: 1500
+ORBextractor.nFeatures: 1200 #1500
 
 # ORB Extractor: Scale factor between levels in the scale pyramid
 ORBextractor.scaleFactor: 1.2
@@ -122,8 +122,8 @@ ORBextractor.scaleFactor: 1.2
 ORBextractor.nLevels: 8
 
 # ORB Extractor: Fast threshold
-ORBextractor.iniThFAST: 8
-ORBextractor.minThFAST: 3
+ORBextractor.iniThFAST: 20 #8
+ORBextractor.minThFAST: 7 #3
 
 #--------------------------------------------------------------------------------------------
 # Viewer Parameters
