@@ -1633,6 +1633,9 @@ int main(int argc, char** argv) {
         cout << "Running auto gain on cam0..." << endl;
         pearvio::AutoGainConfig agc;
         auto result = cam0->autoGain(agc);
+        // autoGain() internally calls getFrame() which replaces and then clears
+        // the frame callback. Re-register cam0's callback for the StereoFramePairer.
+        cam0->setFrameCallback([&](const pearvio::FrameData& f) { pairer.onCam0Frame(f); });
         if (result.success) {
             cout << "Auto gain: " << result.gain << " (brightness=" << result.brightness
                  << ", iterations=" << result.iterations << ")" << endl;
@@ -1640,7 +1643,12 @@ int main(int argc, char** argv) {
             cam1->setGain(result.gain);
             camConfig.gain = result.gain;
             camConfig.autoExposure = false;
-            camConfig.saveToIniFile();
+            // Only save gain/exposure — resolution is owned by PearCameraApp
+            pearvio::CameraConfig saveConfig;
+            saveConfig.loadFromIniFile();
+            saveConfig.gain = result.gain;
+            saveConfig.autoExposure = false;
+            saveConfig.saveToIniFile();
         } else {
             cout << "Auto gain failed, using current gain: " << cam0->gain() << endl;
         }
