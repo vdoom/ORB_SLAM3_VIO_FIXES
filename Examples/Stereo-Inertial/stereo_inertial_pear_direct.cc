@@ -1951,7 +1951,15 @@ int main(int argc, char** argv) {
         }
 
         // Track with ORB-SLAM3 stereo-inertial
+        auto slamStart = chrono::steady_clock::now();
         Sophus::SE3f Tcw = SLAM.TrackStereo(left, right, frameTime, vImuForFrame);
+        auto slamEnd = chrono::steady_clock::now();
+        double slamMs = chrono::duration<double, milli>(slamEnd - slamStart).count();
+
+        // Print SLAM timing for first 30 frames, then every 100th
+        if (frameCount < 30 || frameCount % 100 == 0) {
+            cout << "[SLAM #" << frameCount << "] TrackStereo: " << fixed << setprecision(1) << slamMs << " ms" << endl;
+        }
 
         // Get velocity and tracking state from ORB-SLAM3
         Eigen::Vector3f velocity = SLAM.GetVelocity();
