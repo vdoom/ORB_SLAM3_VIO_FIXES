@@ -1,0 +1,134 @@
+%YAML:1.0
+
+# New format required for proper stereo rectification in ORB-SLAM3
+File.version: "1.0"
+
+#--------------------------------------------------------------------------------------------
+# Camera Parameters. Stereo calibration using Kalibr with April grid.
+# Source: kalibr_data_2026-03-26_17-42-36_640_s_90deg_new-camchain-imucam.yaml
+# Resolution: 640x400
+# Distortion model: radtan -> ORB-SLAM3 type: PinHole
+#--------------------------------------------------------------------------------------------
+Camera.type: "PinHole"
+
+# Left camera (cam0) intrinsics (2026-03-31)
+Camera1.fx: 365.87086859074964
+Camera1.fy: 369.3696529371307
+Camera1.cx: 335.0679581224575
+Camera1.cy: 196.23630941023887
+
+# Left camera distortion (radtan model: k1, k2, p1, p2)
+Camera1.k1: 0.10633919166365019
+Camera1.k2: -0.13706279193248788
+Camera1.p1: -0.0006707253193002286
+Camera1.p2: 0.0006369419726962234
+
+# Camera resolution
+Camera.width: 640
+Camera.height: 400
+
+# Camera frames per second
+Camera.fps: 20
+
+# Color order of the images (0: BGR, 1: RGB, 2: Grayscale)
+Camera.RGB: 0
+
+#--------------------------------------------------------------------------------------------
+# Right Camera (cam1) Parameters
+#--------------------------------------------------------------------------------------------
+
+# Right camera (cam1) intrinsics (2026-03-31)
+Camera2.fx: 366.81819774876345
+Camera2.fy: 370.2056448872211
+Camera2.cx: 315.60410387390664
+Camera2.cy: 178.45520662737556
+
+# Right camera distortion (radtan model: k1, k2, p1, p2)
+Camera2.k1: 0.11246954879024347
+Camera2.k2: -0.14852633236282758
+Camera2.p1: -0.0015378401468445285
+Camera2.p2: 0.001738221312468537
+
+#--------------------------------------------------------------------------------------------
+# Stereo Extrinsics (new format uses Stereo.T_c1_c2 instead of Tlr)
+# T_c1_c2 = T_lr = pose of right camera in left camera's frame
+# = INVERSE of Kalibr's T_cn_cnm1 (2026-03-31)
+#--------------------------------------------------------------------------------------------
+Stereo.T_c1_c2: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: f
+   data: [0.9997421275336694, 0.01553254961144015, -0.01656557686924091, 0.08765271243802474,
+          -0.015219899470559779, 0.9997067473816272, 0.01883544264793748, 0.000644505832093235,
+          0.016853281417831757, -0.018578459091265837, 0.9996853543806851, 0.0006040033886645866,
+          0.0, 0.0, 0.0, 1.0]
+
+# Close/Far Threshold. Baseline times.
+# depth < 40.0 * 0.0877m = 3.51m is considered "close" (reliable stereo)
+Stereo.ThDepth: 40.0
+
+#--------------------------------------------------------------------------------------------
+# IMU Parameters. From Kalibr calibration.
+# Source: kalibr_data_2026-03-26_17-42-36_640_s_90deg_new-imu.yaml
+#--------------------------------------------------------------------------------------------
+
+# IMU noise parameters (continuous-time, from Kalibr 2026-03-31)
+IMU.NoiseGyro: 0.0011544
+IMU.NoiseAcc: 0.012624
+IMU.GyroWalk: 2.1108e-05
+IMU.AccWalk: 0.00021607
+
+# IMU sampling frequency
+IMU.Frequency: 500.0
+
+#--------------------------------------------------------------------------------------------
+# Camera-IMU Extrinsic Calibration (Tbc: left camera to IMU/body frame)
+# T_ic = inv(T_cam0_imu) from Kalibr (2026-03-31)
+#--------------------------------------------------------------------------------------------
+IMU.T_b_c1: !!opencv-matrix
+   rows: 4
+   cols: 4
+   dt: f
+   data: [-0.010466183188669098, -0.9998090256607007, 0.016503672829466808, 0.0025270220397362255,
+          0.9998986797949306, -0.01030502107964526, 0.009820218169845407, -0.04611639433111032,
+          -0.00964827206376942, 0.016604780876269622, 0.999815579043573, 0.035407537707572476,
+          0.0, 0.0, 0.0, 1.0]
+
+# Insert KFs when there is no visual odometry (1 = better recovery after tracking loss)
+IMU.InsertKFsWhenLost: 1
+
+# Camera-IMU time offset from Kalibr: t_imu = t_cam + 0.00769078s
+Camera.TimeOffset: 0.007690780580144703
+
+#--------------------------------------------------------------------------------------------
+# ORB Parameters
+#--------------------------------------------------------------------------------------------
+
+# ORB Extractor: Number of features per image
+ORBextractor.nFeatures: 1500
+
+# ORB Extractor: Scale factor between levels in the scale pyramid
+ORBextractor.scaleFactor: 1.2
+
+# ORB Extractor: Number of levels in the scale pyramid
+ORBextractor.nLevels: 8
+
+# ORB Extractor: Fast threshold
+ORBextractor.iniThFAST: 8
+ORBextractor.minThFAST: 3
+
+#--------------------------------------------------------------------------------------------
+# Viewer Parameters
+#--------------------------------------------------------------------------------------------
+Viewer.KeyFrameSize: 0.05
+Viewer.KeyFrameLineWidth: 1.0
+Viewer.GraphLineWidth: 0.9
+Viewer.PointSize: 2.0
+Viewer.CameraSize: 0.08
+Viewer.CameraLineWidth: 3.0
+Viewer.ViewpointX: 0.0
+Viewer.ViewpointY: -0.7
+Viewer.ViewpointZ: -1.8
+Viewer.ViewpointF: 500.0
+
+Viewer.imageViewScale: 1.0
