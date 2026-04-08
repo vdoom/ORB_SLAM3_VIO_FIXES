@@ -1579,6 +1579,13 @@ int main(int argc, char** argv) {
     }
     cout << "cam0 started and configured" << endl;
 
+    // Let cam0 stabilize before initializing cam1.
+    // On RPi CM5 the two ISP front-ends share scheduling resources;
+    // giving cam0 time to complete its first few requests makes the
+    // allocation more deterministic and avoids cam1 frame drops.
+    cout << "Waiting for cam0 to stabilize..." << endl;
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
     // ---- cam1: initialize, start, apply settings (NO callback yet) ----
     // Must happen AFTER cam0 is fully started (libcamera requirement)
     pearvio::CameraConfig camConfig1 = camConfig;
