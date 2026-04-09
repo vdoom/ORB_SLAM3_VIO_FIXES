@@ -1614,6 +1614,10 @@ int main(int argc, char** argv) {
         // autoGain() internally calls getFrame() which replaces and then clears
         // the frame callback. Re-register cam0's callback for the StereoFramePairer.
         cam0->setFrameCallback([&](const pearvio::FrameData& f) { pairer.onCam0Frame(f); });
+        // Clear stale cam1 frames that accumulated while cam0's callback was
+        // disconnected during autogain. Without this, FIFO pairing permanently
+        // pairs frames from different triggers (cam1 appears to lag behind cam0).
+        pairer.reset();
         if (result.success) {
             cout << "Auto gain: " << result.gain << " (brightness=" << result.brightness
                  << ", iterations=" << result.iterations << ")" << endl;
@@ -1944,6 +1948,7 @@ int main(int argc, char** argv) {
                 auto result = cam0->autoGain(agc);
                 // autoGain() clears the frame callback — must re-register
                 cam0->setFrameCallback([&](const pearvio::FrameData& f) { pairer.onCam0Frame(f); });
+                pairer.reset();  // Clear stale cam1 frames from autogain period
                 if (result.success) {
                     cout << "Auto gain (on lost): " << result.gain << " (brightness=" << result.brightness
                          << ", iterations=" << result.iterations << ")" << endl;
