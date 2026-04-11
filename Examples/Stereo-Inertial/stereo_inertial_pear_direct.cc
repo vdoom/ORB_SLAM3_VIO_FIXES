@@ -21,7 +21,7 @@
  *
  * Usage: ./stereo_inertial_pear_direct path_to_vocabulary path_to_settings
  *            [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]
- *            [--autogain] [--test]
+ *            [--autogain] [--autogain-on-lost] [--test]
  *
  *   Defaults: /dev/ttyACM0, /dev/ttyAMA0, 1500000, 1 (VISION_POSITION_ESTIMATE), 0 (OFF)
  *
@@ -1344,6 +1344,7 @@ private:
 int main(int argc, char** argv) {
     // Extract flags first
     bool enable_autogain = false;
+    bool enable_autogain_on_lost = false;
     bool test_mode = false;
     std::vector<std::string> positional_args;
 
@@ -1351,6 +1352,9 @@ int main(int argc, char** argv) {
         std::string arg = argv[i];
         if (arg == "--autogain") {
             enable_autogain = true;
+        } else if (arg == "--autogain-on-lost") {
+            enable_autogain_on_lost = true;
+            enable_autogain = true;  // implies --autogain for initial tuning
         } else if (arg == "--test") {
             test_mode = true;
         } else {
@@ -1365,7 +1369,7 @@ int main(int argc, char** argv) {
              << endl
              << "           [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]"
              << endl
-             << "           [--autogain] [--test]"
+             << "           [--autogain] [--autogain-on-lost] [--test]"
              << endl
              << endl
              << "  Defaults:"
@@ -1384,9 +1388,11 @@ int main(int argc, char** argv) {
              << endl
              << "    visualization: 0 = OFF (default), 1 = ON (Pangolin viewer)"
              << endl
-             << "    --autogain:  Run auto gain tuning on startup"
+             << "    --autogain:          Run auto gain tuning on startup"
              << endl
-             << "    --test:      Skip MAVLink, enable Pangolin visualization"
+             << "    --autogain-on-lost:  Re-tune gain each time tracking is lost (implies --autogain)"
+             << endl
+             << "    --test:              Skip MAVLink, enable Pangolin visualization"
              << endl
              << endl
              << "  NOTE: Direct Stereo mode - both cameras run in-process with"
@@ -1454,6 +1460,7 @@ int main(int argc, char** argv) {
     }
     cout << "Visualization:   " << (enable_visualization ? "ON" : "OFF") << endl;
     cout << "Auto Gain:       " << (enable_autogain ? "ON" : "OFF") << endl;
+    cout << "AG on Lost:      " << (enable_autogain_on_lost ? "ON" : "OFF") << endl;
     cout << "=================================================" << endl;
 
     // ---- Initialize IMU reader using PearAPI ----
@@ -1975,6 +1982,40 @@ int main(int argc, char** argv) {
         // Get velocity and tracking state from ORB-SLAM3
         Eigen::Vector3f velocity = SLAM.GetVelocity();
         auto tracking_state = SLAM.GetTrackingState();
+
+        // Re-tune gain when tracking starts failing (RECENTLY_LOST)
+        // Done here rather than on LOST, because LOST triggers re-init
+        // and auto gain delay would interfere with new feature detection
+        {
+            static int prev_state_for_autogain = -1;
+            if (enable_autogain_on_lost &&
+                tracking_state == ORB_SLAM3::Tracking::RECENTLY_LOST &&
+                prev_state_for_autogain != ORB_SLAM3::Tracking::RECENTLY_LOST) {
+                cout << "Tracking lost - re-tuning gain..." << endl;
+                pearvio::AutoGainConfig agc;
+                auto result = cam0->autoGain(agc);
+                // autoGain() clears the frame callback — must re-register
+                cam0->setFrameCallback([&](const pearvio::FrameData& f) { pairer.onCam0Frame(f); });
+                pairer.reset();  // Clear stale cam1 frames from autogain period
+                if (result.success) {
+                    cout << "Auto gain (on lost): " << result.gain << " (brightness=" << result.brightness
+                         << ", iterations=" << result.iterations << ")" << endl;
+                    cam0->setGain(result.gain);
+                    cam1->setGain(result.gain);
+                    camConfig.gain = result.gain;
+                    camConfig.autoExposure = false;
+                    // Only save gain/exposure — resolution is owned by PearCameraApp
+                    pearvio::CameraConfig saveConfig;
+                    saveConfig.loadFromIniFile();
+                    saveConfig.gain = result.gain;
+                    saveConfig.autoExposure = false;
+                    saveConfig.saveToIniFile();
+                } else {
+                    cout << "Auto gain (on lost) failed, keeping gain: " << cam0->gain() << endl;
+                }
+            }
+            prev_state_for_autogain = tracking_state;
+        }
 
         if (test_mode) {
             // Test mode: print VIO data to console
