@@ -11,8 +11,9 @@
  * bypasses the PiSP ISP entirely, capturing raw 10-bit sensor data from the CFE
  * and converting to 8-bit in software, achieving ~26 FPS per camera.
  *
- * NOTE: Auto-exposure does NOT work in raw capture mode (no ISP statistics).
- * Use manual exposure + gain, or hardware trigger mode.
+ * NOTE: libcamera auto-exposure does NOT work in raw capture mode (no ISP
+ * statistics). Use --auto-exposure and --brightness-ctrl for manual exposure
+ * control, or set manual exposure + gain via PearCameraApp config.
  *
  * Hardware:
  * - 2x OV9281 global shutter cameras (via libcamera / direct raw capture)
@@ -21,7 +22,7 @@
  *
  * Usage: ./stereo_inertial_pear_direct path_to_vocabulary path_to_settings
  *            [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]
- *            [--autogain] [--autogain-on-lost] [--test]
+ *            [--autogain] [--autogain-on-lost] [--auto-exposure] [--brightness-ctrl] [--test]
  *
  *   Defaults: /dev/ttyACM0, /dev/ttyAMA0, 1500000, 1 (VISION_POSITION_ESTIMATE), 0 (OFF)
  *
@@ -1345,6 +1346,8 @@ int main(int argc, char** argv) {
     // Extract flags first
     bool enable_autogain = false;
     bool enable_autogain_on_lost = false;
+    bool enable_auto_exposure = false;
+    bool enable_brightness_ctrl = false;
     bool test_mode = false;
     std::vector<std::string> positional_args;
 
@@ -1355,6 +1358,10 @@ int main(int argc, char** argv) {
         } else if (arg == "--autogain-on-lost") {
             enable_autogain_on_lost = true;
             enable_autogain = true;  // implies --autogain for initial tuning
+        } else if (arg == "--auto-exposure") {
+            enable_auto_exposure = true;
+        } else if (arg == "--brightness-ctrl") {
+            enable_brightness_ctrl = true;
         } else if (arg == "--test") {
             test_mode = true;
         } else {
@@ -1369,7 +1376,7 @@ int main(int argc, char** argv) {
              << endl
              << "           [imu_serial_port] [mavlink_serial_port] [mavlink_baud] [mode] [visualization]"
              << endl
-             << "           [--autogain] [--autogain-on-lost] [--test]"
+             << "           [--autogain] [--autogain-on-lost] [--auto-exposure] [--brightness-ctrl] [--test]"
              << endl
              << endl
              << "  Defaults:"
@@ -1392,12 +1399,18 @@ int main(int argc, char** argv) {
              << endl
              << "    --autogain-on-lost:  Re-tune gain each time tracking is lost (implies --autogain)"
              << endl
+             << "    --auto-exposure:     Auto-tune exposure at startup"
+             << endl
+             << "    --brightness-ctrl:   Continuous exposure+gain brightness controller"
+             << endl
              << "    --test:              Skip MAVLink, enable Pangolin visualization"
              << endl
              << endl
              << "  NOTE: Direct Stereo mode - both cameras run in-process with"
              << endl
-             << "  rawCapture=true (bypasses ISP). Auto-exposure does NOT work."
+             << "  rawCapture=true (bypasses ISP). libcamera auto-exposure does NOT work,"
+             << endl
+             << "  but --auto-exposure and --brightness-ctrl use manual exposure control."
              << endl;
         return 1;
     }
@@ -1461,6 +1474,8 @@ int main(int argc, char** argv) {
     cout << "Visualization:   " << (enable_visualization ? "ON" : "OFF") << endl;
     cout << "Auto Gain:       " << (enable_autogain ? "ON" : "OFF") << endl;
     cout << "AG on Lost:      " << (enable_autogain_on_lost ? "ON" : "OFF") << endl;
+    cout << "Auto Exposure:   " << (enable_auto_exposure ? "ON" : "OFF") << endl;
+    cout << "Brightness Ctrl: " << (enable_brightness_ctrl ? "ON" : "OFF") << endl;
     cout << "=================================================" << endl;
 
     // ---- Initialize IMU reader using PearAPI ----
@@ -1533,6 +1548,7 @@ int main(int argc, char** argv) {
         cv::Mat left;
         cv::Mat right;
         uint64_t timestamp;
+        int exposureTimeUs = 0;
     };
 
     std::mutex stereo_mutex;
@@ -1551,7 +1567,7 @@ int main(int argc, char** argv) {
             cv::resize(right, right, cv::Size(outputWidth, outputHeight), 0, 0, cv::INTER_AREA);
         }
         std::lock_guard<std::mutex> lock(stereo_mutex);
-        latestStereoFrame = {left.clone(), right.clone(), pair.cam0.timestamp};
+        latestStereoFrame = {left.clone(), right.clone(), pair.cam0.timestamp, pair.cam0.exposureTime};
         stereoPairReady = true;
         stereo_cv.notify_one();
     });
@@ -1642,8 +1658,27 @@ int main(int argc, char** argv) {
          << " exposure=" << cam0->exposureTime() << "us"
          << " gain=" << cam0->gain() << endl;
 
+    // ---- Auto-tune exposure at startup (wider range than gain) ----
+    if (enable_auto_exposure) {
+        cout << "Running auto-exposure on cam0..." << endl;
+        pearvio::AutoExposureConfig aec;
+        aec.maxExposureUs = 30000;
+        auto expoResult = cam0->autoExposure(aec);
+        cam0->setFrameCallback([&](const pearvio::FrameData& f) { pairer.onCam0Frame(f); });
+        pairer.reset();
+        if (expoResult.success) {
+            cout << "Auto exposure: " << expoResult.exposureUs << " us"
+                 << " (brightness=" << expoResult.brightness
+                 << ", iterations=" << expoResult.iterations << ")" << endl;
+            cam0->setExposureTime(expoResult.exposureUs);
+            cam1->setExposureTime(expoResult.exposureUs);
+        } else {
+            cout << "Auto exposure failed, keeping " << cam0->exposureTime() << " us" << endl;
+        }
+    }
+
     // ---- Auto-tune gain if requested via --autogain flag ----
-    if (enable_autogain) {
+    if (enable_autogain || enable_auto_exposure) {
         cout << "Running auto gain on cam0..." << endl;
         pearvio::AutoGainConfig agc;
         auto result = cam0->autoGain(agc);
@@ -1670,6 +1705,14 @@ int main(int argc, char** argv) {
         } else {
             cout << "Auto gain failed, using current gain: " << cam0->gain() << endl;
         }
+    }
+
+    // Ensure auto-exposure is off if brightness controller will be used
+    if (enable_brightness_ctrl && cam0->autoExposure()) {
+        cam0->setAutoExposure(false);
+        cam1->setAutoExposure(false);
+        std::this_thread::sleep_for(std::chrono::milliseconds(200));
+        cout << "Disabled auto-exposure for brightness controller" << endl;
     }
 
     // ---- Wait for first IMU data to establish time base ----
@@ -1795,11 +1838,22 @@ int main(int argc, char** argv) {
     uint32_t last_health_check = getCurrentTimeMs();
     const uint32_t HEALTH_CHECK_INTERVAL_MS = 5000;
 
+    // Exposure tracking for brightness controller
+    int lastFrameExposureUs = cam0->exposureTime();
+
+    // Continuous brightness controller state
+    pearvio::BrightnessControllerConfig brightnessCtrl;
+    brightnessCtrl.maxExposureUs = 30000;
+    int ctrlExposureUs = lastFrameExposureUs;
+    float ctrlGain = cam0->gain();
+    int brightnessCycleCounter = 0;
+
     // ---- Main loop ----
     try {
     while (!SLAM.isShutDown() && b_continue_session) {
         // Wait for synchronized stereo pair
         cv::Mat left, right;
+        int frameExposureUs = 0;
         {
             std::unique_lock<std::mutex> lock(stereo_mutex);
             if (!stereoPairReady) {
@@ -1810,7 +1864,23 @@ int main(int argc, char** argv) {
             }
             left = latestStereoFrame.left;
             right = latestStereoFrame.right;
+            frameExposureUs = latestStereoFrame.exposureTimeUs;
             stereoPairReady = false;
+        }
+        if (frameExposureUs > 0) {
+            lastFrameExposureUs = frameExposureUs;
+        }
+
+        // Continuous brightness adjustment (non-blocking, every N frames)
+        if (enable_brightness_ctrl) {
+            if (++brightnessCycleCounter >= brightnessCtrl.adjustIntervalFrames) {
+                brightnessCycleCounter = 0;
+                ctrlExposureUs = lastFrameExposureUs;
+                if (cam0->adjustBrightness(left, brightnessCtrl, ctrlExposureUs, ctrlGain)) {
+                    cam1->setExposureTime(ctrlExposureUs);
+                    cam1->setGain(ctrlGain);
+                }
+            }
         }
 
         // Get Pico trigger timestamp
@@ -1880,7 +1950,8 @@ int main(int argc, char** argv) {
         // Determine frame time
         double frameTime;
         if (triggerTimestamp > 0 && triggerTimestamp >= firstImuTimestamp) {
-            frameTime = ((triggerTimestamp - firstImuTimestamp) / 1000.0) + halfExposureTimeSec + cameraTimeOffset;
+            double halfExpo = lastFrameExposureUs / 2.0 / 1e6;
+            frameTime = ((triggerTimestamp - firstImuTimestamp) / 1000.0) + halfExpo + cameraTimeOffset;
         } else {
             if (!vImuMeas.empty()) {
                 frameTime = vImuMeas.back().t;

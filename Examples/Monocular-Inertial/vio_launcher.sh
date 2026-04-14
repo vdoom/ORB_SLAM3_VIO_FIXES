@@ -69,7 +69,7 @@ FULL_PATH=~/vin_logs/$timestamp.txt
     echo "Launch VIO"
     #~/ORB_SLAM3/Examples/Stereo-Inertial
     #./mono_inertial_pear ../../Vocabulary/ORBvoc.txt custom_cam_imu_72deg.yaml 2 >> $FULL_PATH 2>&1
-    ./../Stereo-Inertial/stereo_inertial_pear_direct ../../Vocabulary/ORBvoc.txt ../Stereo-Inertial/orbslam3_stereo_inertial.yaml /dev/ttyACM0 /dev/ttyAMA0 1500000 2 0 --autogain-on-lost >> $FULL_PATH 2>&1
+    ./../Stereo-Inertial/stereo_inertial_pear_direct ../../Vocabulary/ORBvoc.txt ../Stereo-Inertial/orbslam3_stereo_inertial.yaml /dev/ttyACM0 /dev/ttyAMA0 1500000 2 0 --brightness-ctrl  >> $FULL_PATH 2>&1
     #./mono_inertial_pear ../../Vocabulary/ORBvoc.txt custom_cam_imu_140deg_arducam.yaml /dev/ttyACM0 /dev/ttyTHS1 1500000 2 0 --autogain-on-lost >> $FULL_PATH 2>&1
     #python3.8 /tmp/ramdisk/orca/drn-orca/ALGO_MAIN.py >> $FULL_PATH 2>&1
 #else
